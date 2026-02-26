@@ -7,7 +7,7 @@
 *专为 STM32 打造的 AI 原生命令行开发与调试智能体*
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python](https://img.shields.io/badge/Python-3.12+-green.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.8+-green.svg)](https://www.python.org/)
 [![Website](https://img.shields.io/badge/Website-garycli.com-success)](https://www.garycli.com)
 
 </div>
