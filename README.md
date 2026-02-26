@@ -27,10 +27,12 @@
 **Linux / macOS / WSL:**
 ```bash
 curl -fsSL [https://www.garycli.com/install.sh](https://www.garycli.com/install.sh) | bash
+```
 
 **Windows (PowerShell):**
 ```bash
 irm [https://www.garycli.com/install.ps1](https://www.garycli.com/install.ps1) | iex
+```
 
 🛠️ 核心特性 (Features)
 🗣️ 自然语言驱动硬件：只需说 gary do "配置 I2C 读取 MPU6050 数据"，逻辑瞬间生成。
@@ -43,9 +45,7 @@ irm [https://www.garycli.com/install.ps1](https://www.garycli.com/install.ps1) |
 
 💻 使用范例 (Usage)
 初始化环境并配置大模型 API Key 后，你可以随时在终端呼叫它：
-
-Bash
-
+```bash
 # 执行单次开发任务
 gary do "帮我写一个呼吸灯程序，使用 PA8 引脚的 PWM 输出"
 
@@ -54,6 +54,7 @@ gary
 
 # 诊断物理探针与环境
 gary doctor
+```
 📜 协议 (License)
 本项目采用 Apache-2.0 License 开源。
 
