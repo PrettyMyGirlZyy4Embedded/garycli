@@ -28,11 +28,10 @@
 ```bash
 curl -fsSL [https://www.garycli.com/install.sh](https://www.garycli.com/install.sh) | bash
 
-Windows (PowerShell):
-
-PowerShell
-
+**Windows (PowerShell):**
+```bash
 irm [https://www.garycli.com/install.ps1](https://www.garycli.com/install.ps1) | iex
+
 🛠️ 核心特性 (Features)
 🗣️ 自然语言驱动硬件：只需说 gary do "配置 I2C 读取 MPU6050 数据"，逻辑瞬间生成。
 
