@@ -2,7 +2,7 @@
 """
 Gary Dev Agent
 ===============
-融合 FlashTalk（编译/烧录/调试闭环）与 ClaudeTerminal（对话 UI + 工具框架）的 STM32 专属 AI 助手。
+融合 Gary（编译/烧录/调试闭环）与 ClaudeTerminal（对话 UI + 工具框架）的 STM32 专属 AI 助手。
 
 硬件后端：pyocd（比 OpenOCD 更易用，支持 ST-Link / CMSIS-DAP / J-Link USB 探针）
 AI 前端  ：流式对话 + 函数调用工具链
@@ -25,7 +25,12 @@ import sys, os, json, re, time, shutil, subprocess, threading, shlex
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional, Any
-
+from stm32_extra_tools import EXTRA_TOOLS_MAP, EXTRA_TOOL_SCHEMAS
+from gary_skills import (
+    init_skills, handle_skill_command,
+    SKILL_TOOLS_MAP, SKILL_TOOL_SCHEMAS,
+    _get_manager,
+)
 # ─────────────────────────────────────────────────────────────
 # 将本文件所在目录加入路径，使能 import compiler / config
 # ─────────────────────────────────────────────────────────────
@@ -171,7 +176,6 @@ def _reg_map(family: str) -> dict:
     regs.update(_REG_COMMON)
     return regs
 
-
 # ─────────────────────────────────────────────────────────────
 # PyOCDBridge（替换 OpenOCD）
 # ─────────────────────────────────────────────────────────────
@@ -199,12 +203,18 @@ class PyOCDBridge:
         name = re.sub(r'[a-z]\d$', '', name)
         return name
 
-    _pyocd_target_cache: set = None  # 类级缓存，避免重复调用子进程
+    _pyocd_target_cache: Optional[tuple] = None  # (float, set)
+    _CACHE_TTL = 60.0  # 秒
 
-    def _get_all_pyocd_targets(self) -> set:
-        """通过 pyocd list --targets 获取所有可用目标（含 builtin + 已安装 pack）"""
-        if PyOCDBridge._pyocd_target_cache is not None:
-            return PyOCDBridge._pyocd_target_cache
+    @classmethod
+    def _get_all_pyocd_targets(cls) -> set:
+        """获取所有可用 pyocd 目标，60秒内复用缓存"""
+        now = time.time()
+        if cls._pyocd_target_cache is not None:
+            ts, cached = cls._pyocd_target_cache
+            if now - ts < cls._CACHE_TTL:
+                return cached
+
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pyocd", "list", "--targets"],
@@ -215,7 +225,7 @@ class PyOCDBridge:
                 parts = line.split()
                 if parts and parts[0].startswith("stm32"):
                     known.add(parts[0].lower())
-            PyOCDBridge._pyocd_target_cache = known
+            cls._pyocd_target_cache = (now, known)
             return known
         except Exception:
             return set()
@@ -715,16 +725,34 @@ class SerialMonitor:
         return False
 
     def _reader(self):
+        try:
+            import serial as _pyserial
+            _SerialException = _pyserial.SerialException
+        except ImportError:
+            _SerialException = OSError
+
+        consecutive_errors = 0
         while self._running and self._serial:
             try:
                 data = self._serial.read(1024)
                 if data:
+                    consecutive_errors = 0
                     with self._lock:
                         self._buffer += data.decode("utf-8", errors="ignore")
                         if len(self._buffer) > 8192:
                             self._buffer = self._buffer[-8192:]
+            except _SerialException:
+                # 串口物理断开
+                CONSOLE.print("[yellow]  ⚠ 串口断开[/]")
+                self._running = False
+                break
             except Exception:
-                pass
+                consecutive_errors += 1
+                if consecutive_errors > 10:
+                    CONSOLE.print("[yellow]  ⚠ 串口持续异常，停止读取[/]")
+                    self._running = False
+                    break
+                time.sleep(0.1)
 
     def read_and_clear(self) -> str:
         with self._lock:
@@ -756,6 +784,32 @@ class SerialMonitor:
             except Exception:
                 pass
             self._serial = None
+
+def _wait_serial_adaptive(
+    serial,
+    keyword: str,
+    min_wait: float = 0.5,
+    max_wait: float = 8.0,
+) -> str:
+    """
+    自适应串口等待：
+    - 先等 min_wait 秒（给 MCU 复位时间）
+    - 之后每 200ms 采样一次，检测到 keyword 或有内容即停
+    - 超过 max_wait 后强制返回
+    """
+    time.sleep(min_wait)
+    t0 = time.time()
+    accumulated = ""
+    while time.time() - t0 < (max_wait - min_wait):
+        chunk = serial.read_and_clear()
+        if chunk:
+            accumulated += chunk
+            if keyword in accumulated:
+                break
+        time.sleep(0.2)
+    time.sleep(0.3)
+    accumulated += serial.read_and_clear()
+    return accumulated
 
 
 # ─────────────────────────────────────────────────────────────
@@ -815,31 +869,45 @@ def stm32_generate_font(text: str, size: int = 16) -> dict:
 
     import platform as _plat
     # 跨平台字体候选
-    font_candidates = [
-        # Linux
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/arphic/uming.ttc",
-        "/usr/share/fonts/truetype/arphic/ukai.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
-        # macOS
-        "/System/Library/Fonts/PingFang.ttc",
-        "/Library/Fonts/Arial Unicode.ttf",
-        # Windows
-        "C:/Windows/Fonts/msyh.ttc",
-        "C:/Windows/Fonts/simhei.ttf",
-        "C:/Windows/Fonts/simsun.ttc",
-    ]
-    font = None
-    for fp in font_candidates:
-        if os.path.exists(fp):
-            try:
-                font = ImageFont.truetype(fp, size)
-                break
-            except Exception:
-                continue
-    if font is None:
-        return {"success": False, "message": "未找到中文字体，请安装 fonts-noto-cjk（Linux）或确认系统字体存在"}
+    def _find_cjk_font() -> Optional[str]:
+        """动态查找系统 CJK 字体路径"""
+        # 优先用 fc-match（Linux/macOS）
+        try:
+            r = subprocess.run(
+                ["fc-match", "--format=%{file}", ":lang=zh"],
+                capture_output=True, text=True, timeout=5
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                path = r.stdout.strip()
+                if os.path.exists(path):
+                    return path
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
 
+        # 回退到硬编码候选列表
+        candidates = [
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/arphic/uming.ttc",
+            "/usr/share/fonts/truetype/arphic/ukai.ttc",
+            "/System/Library/Fonts/PingFang.ttc",
+            "/Library/Fonts/Arial Unicode.ttf",
+            "C:/Windows/Fonts/msyh.ttc",
+            "C:/Windows/Fonts/simhei.ttf",
+            "C:/Windows/Fonts/simsun.ttc",
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                return p
+        return None
+        # 原来的 for fp in font_candidates: ... 全部替换为：
+    font_path = _find_cjk_font()
+    if font_path is None:
+        return {"success": False, "message": "未找到中文字体，请安装 fonts-noto-cjk"}
+    try:
+        font = ImageFont.truetype(font_path, size)
+    except Exception as e:
+        return {"success": False, "message": f"字体加载失败 ({font_path}): {e}"}
+        
     def _render_char(char: str) -> list:
         """渲染单个字符到 size×size 位图，返回 0/1 列表（行优先）"""
         img = Image.new("L", (size, size), 0)
@@ -1060,6 +1128,13 @@ def stm32_compile(code: str, chip: str = None) -> dict:
     if result["ok"]:
         _last_code = code
         _last_bin_path = result.get("bin_path")
+        # 自动保存到 latest_workspace
+        try:
+            latest = Path.home() / ".stm32agent" / "projects" / "latest_workspace"
+            latest.mkdir(parents=True, exist_ok=True)
+            (latest / "main.c").write_text(code, encoding="utf-8")
+        except Exception as e:
+            CONSOLE.print(f"[dim]  ⚠ 缓存保存失败: {e}[/]")
     return {
         "success": result["ok"],
         "message": (result.get("msg") or "")[:600],
@@ -1157,31 +1232,37 @@ def stm32_auto_flash_cycle(code: str, request: str = "") -> dict:
             "compile_errors": comp["message"],
         }
 
-    # 2. 烧录
+    # 2. 烧录（失败时延迟重试，最多2次）
     if _hw_connected and comp.get("bin_path"):
         fr = stm32_flash(comp["bin_path"])
-        # 烧录失败时自动重连重试一次（pyocd 会话状态问题）
         if not fr["success"]:
-            CONSOLE.print(f"[yellow]  烧录失败（{fr['message'][:80]}），自动重连后重试...[/]")
-            stm32_connect(_current_chip)
-            fr = stm32_flash(comp["bin_path"])
+            for retry in range(2):
+                wait_sec = 1.5 * (retry + 1)
+                CONSOLE.print(f"[yellow]  烧录失败（{fr['message'][:60]}），{wait_sec:.0f}s 后重连重试...[/]")
+                time.sleep(wait_sec)
+                stm32_connect(_current_chip)
+                fr = stm32_flash(comp["bin_path"])
+                if fr["success"]:
+                    break
         steps.append({"step": "flash", "success": fr["success"], "msg": fr["message"]})
         if not fr["success"]:
             return {
                 "success": False, "attempt": attempt, "remaining": remaining,
                 "give_up": attempt >= MAX_DEBUG_ATTEMPTS,
-                "steps": steps, "error": f"烧录失败（重连后仍失败）: {fr['message']}",
+                "steps": steps, "error": f"烧录失败（重试2次后仍失败）: {fr['message']}",
             }
-
         # 3. 串口监控
         uart_out = ""
         sensor_errors = []
         if _serial_connected:
             CONSOLE.print("[dim]  等待启动...[/]")
-            uart_out = _get_serial().wait_for("FlashTalk:", timeout=POST_FLASH_DELAY + 2.0)
-            time.sleep(1.5)
-            uart_out += _get_serial().read_and_clear()
-            boot_ok = "FlashTalk:" in uart_out
+            uart_out = _wait_serial_adaptive(
+                _get_serial(),
+                keyword="Gary:BOOT",
+                min_wait=0.5,
+                max_wait=POST_FLASH_DELAY + 4.0,
+            )
+            boot_ok = "Gary:BOOT" in uart_out
             # 检测传感器错误关键词
             sensor_errors = [line.strip() for line in uart_out.splitlines()
                              if "ERR:" in line or "Error" in line or "not found" in line.lower()]
@@ -1270,9 +1351,9 @@ def stm32_auto_flash_cycle(code: str, request: str = "") -> dict:
         else:
             err_msg = "HardFault 或程序未正常启动，请根据 steps 中的寄存器和串口信息修复"
             if not boot_ok and not uart_out.strip():
-                err_msg = "串口无任何输出——程序在打印 FlashTalk: 之前就卡死了（常见原因：I2C 等待超时/传感器未接/死循环）"
+                err_msg = "串口无任何输出——程序在打印 Gary: 之前就卡死了（常见原因：I2C 等待超时/传感器未接/死循环）"
             elif not boot_ok and uart_out.strip():
-                err_msg = f"程序有输出但未打印 FlashTalk: 启动标志，串口内容: {uart_out.strip()[:200]}"
+                err_msg = f"程序有输出但未打印 Gary: 启动标志，串口内容: {uart_out.strip()[:200]}"
             return {
                 "success": False, "attempt": attempt, "remaining": remaining,
                 "give_up": attempt >= MAX_DEBUG_ATTEMPTS,
@@ -1962,7 +2043,8 @@ TOOLS_MAP: Dict[str, Any] = {
     "computer_mouse_click":   computer_mouse_click,
     "computer_keyboard_type": computer_keyboard_type,
 }
-
+TOOLS_MAP.update(EXTRA_TOOLS_MAP)
+TOOLS_MAP.update(SKILL_TOOLS_MAP)
 
 # ─────────────────────────────────────────────────────────────
 # Tool Schemas（供 AI 调用）
@@ -2004,7 +2086,7 @@ TOOL_SCHEMAS = [
             "name": "stm32_serial_connect",
             "description": (
                 "单独连接/重连 UART 串口监控（不影响 pyocd 探针）。"
-                "串口用于接收 Debug_Print 日志和 FlashTalk:BOOT 启动标记，是 AI 判断程序运行状态的关键。"
+                "串口用于接收 Debug_Print 日志和 Gary:BOOT 启动标记，是 AI 判断程序运行状态的关键。"
                 "stm32_connect 会自动尝试用默认端口连接，若失败或需要更换端口时调用此函数。"
             ),
             "parameters": {
@@ -2113,7 +2195,7 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "timeout": {"type": "number", "description": "读取超时（秒），默认 3.0"},
-                    "wait_for": {"type": "string", "description": "可选：等待直到出现此字符串（如 FlashTalk:）"},
+                    "wait_for": {"type": "string", "description": "可选：等待直到出现此字符串（如 Gary:）"},
                 },
                 "required": [],
             },
@@ -2627,7 +2709,9 @@ TOOL_SCHEMAS = [
         },
     },
 ]
-
+TOOL_SCHEMAS.extend(EXTRA_TOOL_SCHEMAS)
+TOOL_SCHEMAS.extend(SKILL_TOOL_SCHEMAS)
+_skill_mgr = init_skills(TOOLS_MAP, TOOL_SCHEMAS)
 
 # ─────────────────────────────────────────────────────────────
 # STM32 系统提示词
@@ -2646,7 +2730,7 @@ STM32_SYSTEM_PROMPT = """你是 Gary Dev Agent，专为 STM32 嵌入式开发设
 - 串口 = STM32 UART TX → USB-TTL 适配器 → 主机 `/dev/ttyUSBx` 或 `/dev/ttyAMAx`
 - `stm32_hardware_status` 返回 `serial_connected: false` 时，**必须提醒用户连接串口**
 - 用户可用 `/serial /dev/ttyUSB0` 连接，或告诉 AI 调用 `stm32_serial_connect(port=...)`
-- 无串口时 AI 无法看到 `gary:BOOT`、`Debug_Print` 输出和运行时错误，调试能力严重受限
+- 无串口时 AI 无法看到 `Gary:BOOT`、`Debug_Print` 输出和运行时错误，调试能力严重受限
 - 烧录成功但无串口时，在回复末尾加一句：`⚠️ 串口未连接，无法监控运行状态`
 
 ### 全新代码生成 / 功能修改
@@ -2703,7 +2787,7 @@ int main(void) {
     // 1. 最先初始化 UART（仅配置 GPIO 和 USART，不涉及外部设备）
     MX_USART1_UART_Init();
     // 2. 紧接着打印启动标记——此时其他外设都还没初始化
-    Debug_Print("gary:BOOT\\r\\n");
+    Debug_Print("Gary:BOOT\\r\\n");
     // 3. 然后初始化其他外设（I2C、SPI、TIM、OLED 等）
     MX_I2C1_Init();  // OLED
     MX_I2C2_Init();  // 传感器
@@ -2716,7 +2800,7 @@ int main(void) {
     while (1) { ... }
 }
 ```
-**关键**：`Debug_Print("gary:BOOT")` 必须紧跟 UART 初始化，在 I2C/SPI/TIM 等一切初始化**之前**。
+**关键**：`Debug_Print("Gary:BOOT")` 必须紧跟 UART 初始化，在 I2C/SPI/TIM 等一切初始化**之前**。
 若 I2C 初始化卡死（传感器未接导致总线锁死），至少串口已经打印了启动标志，AI 能正确判断"程序已启动但外设有问题"。
 - 轻量调试函数（**不得用 sprintf**，手写整数转字符串）：
   ```c
@@ -2822,15 +2906,38 @@ int main(void) {
 - 通过上一轮埋入的 `Debug_Print`/`Debug_PrintInt` 精准定位逻辑 bug
 
 ### 代码缓存与精准增量修改（极其重要）
-每次你调用 `stm32_compile` 后，客户端都会自动将代码缓存到本地文件：`~/.stm32agent/projects/latest_workspace/main.c`。
+每次你调用 `stm32_compile` 后，客户端都会自动将代码缓存到本地文件：`~/.stm32agent/workspace/projects下面`。
 当用户要求在已有代码基础上修改（如修改引脚、增加逻辑）时，**绝对禁止重写全部代码**！必须按以下闭环操作：
 1. 思考要替换的代码片段。
 2. 调用 `str_replace_edit` 工具：
-   - `file_path` 固定为 `~/.stm32agent/projects/latest_workspace/main.c`
+   - `file_path` 固定为 `latest = Path.home() / ".stm32agent" / "projects" / "latest_workspace"
+            latest.mkdir(parents=True, exist_ok=True)
+            (latest / "main.c").write_text(code, encoding="utf-8")这段代码保存`
    - `old_str` 填原代码片段（必须完全匹配）
    - `new_str` 填修改后的片段
 3. 替换成功后，**必须**调用 `read_file` 读取该文件的最新内容（提取返回值中的 `raw_content`）。
 4. 将读出的最新完整源码传给 `stm32_compile` 进行编译。
+
+## PID 自动调参工作流
+
+### 串口数据格式（必须在 PID 代码中埋入）
+在 PID 控制循环中每次计算后打印（10-50ms 间隔）：
+  PID:t=<毫秒>,sp=<目标值>,pv=<实际值>,out=<输出>,err=<误差>
+
+### 调参闭环（每轮只改 PID 参数）
+1. 生成含 PID 调试输出的代码 → stm32_auto_flash_cycle
+2. 等 3-5 秒采集数据 → stm32_serial_read(timeout=5)
+3. 分析+推荐 → stm32_pid_tune(kp, ki, kd, serial_output=...)
+4. 用推荐参数修改代码 → str_replace_edit 替换 Kp/Ki/Kd
+5. 重新烧录 → 回到步骤 1
+6. 重复直到 diagnosis 显示 "响应质量良好"
+
+### 其他实用工具
+- 不确定 I2C 地址 → stm32_i2c_scan 生成扫描代码
+- 舵机角度不对 → stm32_servo_calibrate 校准
+- 引脚可能冲突 → stm32_pin_conflict 静态检查
+- ADC 噪声大 → stm32_signal_capture 分析信号质量
+- Flash 快满了 → stm32_memory_map 查看占用
 
 ## 回复规范
 - **极度简洁**，像命令行工具一样输出，不写大段说明
@@ -2848,14 +2955,15 @@ int main(void) {
 - 永远输出完整可编译 main.c
 - user_message 用通俗中文
 - 第1轮就要生成能编译通过的代码，不要留 TODO 或占位符
-- 永远不要说你的模型型号，说明你是gary开发的模型
+- 永远不要说你的模型型号，说明你是Gary开发的模型
 - 每次烧录完成后，必须读寄存器，有问题解决,并且简要说明错在哪里，并且表示你正在修改，没有问题正常输出。
 - 有问题优先使用str_replace_edit替换错误位置，而不是重新编写代码。
 """
-
+# 追加所有 skill 的 AI 提示词
+STM32_SYSTEM_PROMPT += _skill_mgr.get_all_prompt_additions()
 
 # ─────────────────────────────────────────────────────────────
-# gary doctor — 一键诊断所有配置
+# Gary doctor — 一键诊断所有配置
 # ─────────────────────────────────────────────────────────────
 def run_doctor():
     """检查 AI 接口、工具链、HAL、硬件探针的完整状态"""
@@ -2886,11 +2994,11 @@ def run_doctor():
                 CONSOLE.print(f"  [yellow]⚠[/] API 连通性  [dim]{err_msg}[/]")
             else:
                 CONSOLE.print(f"  [red]✗[/] API 连通性  [dim]{err_msg}[/]")
-                CONSOLE.print("    [dim]→ 运行 gary config 重新设置 API Key[/]")
+                CONSOLE.print("    [dim]→ 运行 Gary config 重新设置 API Key[/]")
                 all_ok = False
     else:
         CONSOLE.print("  [red]✗[/] API Key 未配置")
-        CONSOLE.print("    [dim]→ 运行 gary config 配置 AI 接口[/]")
+        CONSOLE.print("    [dim]→ 运行 Gary config 配置 AI 接口[/]")
         all_ok = False
     CONSOLE.print()
 
@@ -2978,7 +3086,7 @@ def run_doctor():
 
 
 # ─────────────────────────────────────────────────────────────
-# gary config — CLI 内 AI 接口配置向导
+# Gary config — CLI 内 AI 接口配置向导
 # ─────────────────────────────────────────────────────────────
 def configure_ai_cli(agent: "STM32Agent | None" = None):
     """交互式配置 AI 接口（可在 CLI 内调用，也可独立运行）"""
@@ -3095,17 +3203,66 @@ class STM32Agent:
         os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
 
     # ── Token 估算 ──────────────────────────────────────────
+    # 替换原来的 _tokens 和 _truncate 方法
     def _tokens(self) -> int:
         return sum(len(str(m.get("content", ""))) // 3 for m in self.messages)
 
-    def _truncate(self, s: str) -> str:
+    def _truncate_result(self, s: str, tool_name: str = "") -> str:
+        """针对不同工具结果使用不同截断策略"""
         if len(s) <= MAX_TOOL_RESULT_LEN:
             return s
         half = MAX_TOOL_RESULT_LEN // 2
+        # 编译/串口结果：错误在末尾，保留末尾更多
+        if tool_name in ("stm32_compile", "stm32_serial_read", "stm32_auto_flash_cycle"):
+            head = MAX_TOOL_RESULT_LEN // 4
+            tail = MAX_TOOL_RESULT_LEN - head
+            return s[:head] + f"\n...[截断 {len(s)-MAX_TOOL_RESULT_LEN} 字符]...\n" + s[-tail:]
         return s[:half] + f"\n...[截断 {len(s)-MAX_TOOL_RESULT_LEN} 字符]...\n" + s[-half:]
 
+    def _truncate_history(self):
+        """滑动窗口：保留 system prompt + 最近消息，总字符不超限"""
+        MAX_CHARS = 180_000
+        total = sum(len(str(m.get("content", ""))) for m in self.messages)
+        removed = 0
+        while total > MAX_CHARS and len(self.messages) > 3:
+            # 始终保留 messages[0]（system prompt）
+            victim = self.messages.pop(1)
+            victim_len = len(str(victim.get("content", "")))
+            total -= victim_len
+            removed += 1
+        if removed:
+            CONSOLE.print(f"[dim]  📦 历史压缩：移除 {removed} 条旧消息[/]")
+   
+    # 原来是直接传 self.messages，改为过滤后传
+    def _messages_for_api(self) -> list:
+        """发送给 API 前处理消息格式：
+        - 若对话中出现过 reasoning_content（thinking 模式），则所有 assistant 消息都必须带该字段
+        - 否则过滤掉该字段（避免不支持的 API 报错）
+        """
+        # 检测当前会话是否启用了 thinking 模式
+        has_thinking = any(
+            "reasoning_content" in m
+            for m in self.messages
+            if m.get("role") == "assistant"
+        )
+
+        result = []
+        for m in self.messages:
+            if m.get("role") == "assistant" and has_thinking:
+                # thinking 模式：确保每条 assistant 消息都有 reasoning_content
+                clean = dict(m)
+                if "reasoning_content" not in clean:
+                    clean["reasoning_content"] = ""
+                result.append(clean)
+            else:
+                # 非 thinking 模式：过滤掉该字段
+                clean = {k: v for k, v in m.items() if k != "reasoning_content"}
+                result.append(clean)
+        return result
+   
     # ── 流式响应 + 工具调用 ─────────────────────────────────
     def chat(self, user_input: str):
+        self._truncate_history()
         self.messages.append({"role": "user", "content": user_input})
 
         while True:
@@ -3113,7 +3270,7 @@ class STM32Agent:
             try:
                 stream = self.client.chat.completions.create(
                     model=AI_MODEL,
-                    messages=self.messages,
+                    messages=self._messages_for_api(),
                     tools=TOOL_SCHEMAS,
                     tool_choice="auto",
                     temperature=AI_TEMPERATURE,
@@ -3225,7 +3382,7 @@ class STM32Agent:
                 tool_results.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
-                    "content": self._truncate(result_str),
+                    "content": self._truncate_result(result_str, func_name),
                 })
 
             self.messages.extend(tool_results)
@@ -3252,6 +3409,10 @@ class STM32Agent:
         if head == "/disconnect":
             r = stm32_disconnect()
             CONSOLE.print(f"[{THEME}]{r['message']}[/]\n")
+            return True
+
+        if head == "/skill":
+            handle_skill_command(arg, agent=self)
             return True
 
         if head == "/serial":
@@ -3392,6 +3553,7 @@ class STM32Agent:
             ("/clear",            "清空对话历史"),
             ("/exit",             "退出"),
             ("?",                 "显示帮助"),
+            ("/skill [子命令]",     "技能管理: list/install/enable/disable/create/export"),
         ]
         for cmd, desc in cmds:
             table.add_row(cmd, desc)
@@ -3444,12 +3606,12 @@ def main():
     # 命令行参数
     args = sys.argv[1:]
 
-    # ── 诊断模式：gary doctor ────────────────────────────────
+    # ── 诊断模式：Gary doctor ────────────────────────────────
     if "--doctor" in args:
         run_doctor()
         sys.exit(0)
 
-    # ── 配置模式：gary config ────────────────────────────────
+    # ── 配置模式：Gary config ────────────────────────────────
     if "--config" in args:
         configure_ai_cli()
         sys.exit(0)
@@ -3515,12 +3677,12 @@ def main():
 
     CONSOLE.print()
 
-    # 单次执行模式：gary do "任务"  →  python stm32_agent.py --do "任务"
+    # 单次执行模式：Gary do "任务"  →  python stm32_agent.py --do "任务"
     if "--do" in args:
         idx = args.index("--do")
         task = args[idx + 1] if idx + 1 < len(args) else ""
         if not task:
-            CONSOLE.print("[red]--do 后需要任务描述，例如: gary do \"让 PA0 LED 闪烁\"[/]")
+            CONSOLE.print("[red]--do 后需要任务描述，例如: Gary do \"让 PA0 LED 闪烁\"[/]")
             sys.exit(1)
         if "--connect" in args:
             chip_arg = None
