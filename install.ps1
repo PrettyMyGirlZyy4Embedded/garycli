@@ -1,10 +1,19 @@
 # ─────────────────────────────────────────────────────────────────
 #  Gary Dev Agent  —  Windows 一键安装脚本 (PowerShell)
-#  用法：irm https://garydo.dev/install.ps1 | iex
+#  用法：irm https://www.garycli.com/install.ps1 | iex
 # ─────────────────────────────────────────────────────────────────
 $ErrorActionPreference = "Stop"
 
-$GARY_URL   = "https://garydo.dev/gary.tar.gz"
+# ── 编码修复：切换控制台到 UTF-8，避免中文乱码 ──────────────────
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
+$OutputEncoding           = [System.Text.Encoding]::UTF8
+chcp 65001 | Out-Null
+
+# ── 网络修复：强制 TLS 1.2，避免"基础连接已关闭"错误 ───────────
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+$GARY_URL   = "https://www.garycli.com/gary.tar.gz"
 $GARY_DIR   = "$env:USERPROFILE\.gary"
 $GARY_VENV  = "$GARY_DIR\.venv"
 $TMP_FILE   = "$env:TEMP\gary_install.tar.gz"
@@ -15,10 +24,10 @@ function warn($msg) { Write-Host "  [!] $msg"  -ForegroundColor Yellow }
 function die($msg)  { Write-Host "  [X] $msg"  -ForegroundColor Red; exit 1 }
 
 Write-Host ""
-Write-Host "  ╔══════════════════════════════════════════╗" -ForegroundColor Magenta
-Write-Host "  ║         Gary Dev Agent  安装程序         ║" -ForegroundColor Magenta
-Write-Host "  ║      STM32 AI 嵌入式开发助手             ║" -ForegroundColor Magenta
-Write-Host "  ╚══════════════════════════════════════════╝" -ForegroundColor Magenta
+Write-Host "  +==========================================+" -ForegroundColor Magenta
+Write-Host "  |      Gary Dev Agent  安装程序           |" -ForegroundColor Magenta
+Write-Host "  |   STM32 AI 嵌入式开发助手               |" -ForegroundColor Magenta
+Write-Host "  +==========================================+" -ForegroundColor Magenta
 Write-Host ""
 
 # ── 1. 检查 Python ───────────────────────────────────────────────
@@ -58,7 +67,7 @@ try {
     Invoke-WebRequest -Uri $GARY_URL -OutFile $TMP_FILE -UseBasicParsing
     ok "下载完成"
 } catch {
-    die "下载失败：$($_.Exception.Message)，请检查网络或访问 https://garydo.dev"
+    die "下载失败：$($_.Exception.Message)，请检查网络或访问 https://www.garycli.com"
 }
 
 # ── 5. 解压 ─────────────────────────────────────────────────────
