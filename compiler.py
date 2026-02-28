@@ -79,6 +79,87 @@ _F1_IRQ_NAMES = [
 
 # F0 中断名与 F1 差异很大：EXTI 合并、TIM 组合等
 _F0_IRQ_NAMES = [
+    "WWDG_IRQHandler",                "PVD_VDDIO2_IRQHandler",          # 0-1"""
+FlashTalk 编译器 - STM32 交叉编译 + 多芯片适配 + HAL 库自动检测
+"""
+
+import subprocess
+from pathlib import Path
+from config import *
+
+# ==================== 芯片参数表 ====================
+# 根据芯片型号自动选择 CPU 核心、Flash/RAM 大小、宏定义、HAL 系列等
+CHIP_DB = {
+    # --- STM32F1 系列 (Cortex-M3) ---
+    "STM32F103C8":  {"cpu": "cortex-m3", "flash_k": 64,  "ram_k": 20,  "define": "STM32F103xB", "family": "f1", "fpu": False},
+    "STM32F103CB":  {"cpu": "cortex-m3", "flash_k": 128, "ram_k": 20,  "define": "STM32F103xB", "family": "f1", "fpu": False},
+    "STM32F103RB":  {"cpu": "cortex-m3", "flash_k": 128, "ram_k": 20,  "define": "STM32F103xB", "family": "f1", "fpu": False},
+    "STM32F103RC":  {"cpu": "cortex-m3", "flash_k": 256, "ram_k": 48,  "define": "STM32F103xE", "family": "f1", "fpu": False},
+    "STM32F103RE":  {"cpu": "cortex-m3", "flash_k": 512, "ram_k": 64,  "define": "STM32F103xE", "family": "f1", "fpu": False},
+    "STM32F103ZE":  {"cpu": "cortex-m3", "flash_k": 512, "ram_k": 64,  "define": "STM32F103xE", "family": "f1", "fpu": False},
+    "STM32F103VE":  {"cpu": "cortex-m3", "flash_k": 512, "ram_k": 64,  "define": "STM32F103xE", "family": "f1", "fpu": False},
+    "STM32F100RB":  {"cpu": "cortex-m3", "flash_k": 128, "ram_k": 8,   "define": "STM32F100xB", "family": "f1", "fpu": False},
+    "STM32F105":    {"cpu": "cortex-m3", "flash_k": 256, "ram_k": 64,  "define": "STM32F105xC", "family": "f1", "fpu": False},
+    "STM32F107":    {"cpu": "cortex-m3", "flash_k": 256, "ram_k": 64,  "define": "STM32F107xC", "family": "f1", "fpu": False},
+    # --- STM32F4 系列 (Cortex-M4F) ---
+    "STM32F401CC":  {"cpu": "cortex-m4", "flash_k": 256, "ram_k": 64,  "define": "STM32F401xC", "family": "f4", "fpu": True},
+    "STM32F401CE":  {"cpu": "cortex-m4", "flash_k": 512, "ram_k": 96,  "define": "STM32F401xE", "family": "f4", "fpu": True},
+    "STM32F407VE":  {"cpu": "cortex-m4", "flash_k": 512, "ram_k": 128, "define": "STM32F407xx", "family": "f4", "fpu": True},
+    "STM32F407VG":  {"cpu": "cortex-m4", "flash_k": 1024,"ram_k": 128, "define": "STM32F407xx", "family": "f4", "fpu": True},
+    "STM32F407ZG":  {"cpu": "cortex-m4", "flash_k": 1024,"ram_k": 128, "define": "STM32F407xx", "family": "f4", "fpu": True},
+    "STM32F411CE":  {"cpu": "cortex-m4", "flash_k": 512, "ram_k": 128, "define": "STM32F411xE", "family": "f4", "fpu": True},
+    "STM32F429ZI":  {"cpu": "cortex-m4", "flash_k": 2048,"ram_k": 256, "define": "STM32F429xx", "family": "f4", "fpu": True},
+    "STM32F446RE":  {"cpu": "cortex-m4", "flash_k": 512, "ram_k": 128, "define": "STM32F446xx", "family": "f4", "fpu": True},
+    # --- STM32F0 系列 (Cortex-M0) ---
+    "STM32F030F4":  {"cpu": "cortex-m0", "flash_k": 16,  "ram_k": 4,   "define": "STM32F030x6", "family": "f0", "fpu": False},
+    "STM32F030C8":  {"cpu": "cortex-m0", "flash_k": 64,  "ram_k": 8,   "define": "STM32F030x8", "family": "f0", "fpu": False},
+    "STM32F072RB":  {"cpu": "cortex-m0", "flash_k": 128, "ram_k": 16,  "define": "STM32F072xB", "family": "f0", "fpu": False},
+    # --- STM32F3 系列 (Cortex-M4F) ---
+    "STM32F303CC":  {"cpu": "cortex-m4", "flash_k": 256, "ram_k": 40,  "define": "STM32F303xC", "family": "f3", "fpu": True},
+    "STM32F303RE":  {"cpu": "cortex-m4", "flash_k": 512, "ram_k": 64,  "define": "STM32F303xE", "family": "f3", "fpu": True},
+}
+
+# 各系列 IRQ 处理函数名称表（按向量位置排列，None = 保留位填 0）
+# 使用具名 weak 别名，C 代码里定义同名函数即可覆盖
+
+_F1_IRQ_NAMES = [
+    "WWDG_IRQHandler",            "PVD_IRQHandler",             # 0-1
+    "TAMPER_IRQHandler",          "RTC_IRQHandler",             # 2-3
+    "FLASH_IRQHandler",           "RCC_IRQHandler",             # 4-5
+    "EXTI0_IRQHandler",           "EXTI1_IRQHandler",           # 6-7
+    "EXTI2_IRQHandler",           "EXTI3_IRQHandler",           # 8-9
+    "EXTI4_IRQHandler",                                         # 10
+    "DMA1_Channel1_IRQHandler",   "DMA1_Channel2_IRQHandler",  # 11-12
+    "DMA1_Channel3_IRQHandler",   "DMA1_Channel4_IRQHandler",  # 13-14
+    "DMA1_Channel5_IRQHandler",   "DMA1_Channel6_IRQHandler",  # 15-16
+    "DMA1_Channel7_IRQHandler",   "ADC1_2_IRQHandler",         # 17-18
+    "USB_HP_CAN1_TX_IRQHandler",  "USB_LP_CAN1_RX0_IRQHandler",# 19-20
+    "CAN1_RX1_IRQHandler",        "CAN1_SCE_IRQHandler",        # 21-22
+    "EXTI9_5_IRQHandler",                                       # 23
+    "TIM1_BRK_IRQHandler",        "TIM1_UP_IRQHandler",         # 24-25
+    "TIM1_TRG_COM_IRQHandler",    "TIM1_CC_IRQHandler",         # 26-27
+    "TIM2_IRQHandler",            "TIM3_IRQHandler",            # 28-29
+    "TIM4_IRQHandler",                                          # 30
+    "I2C1_EV_IRQHandler",         "I2C1_ER_IRQHandler",         # 31-32
+    "I2C2_EV_IRQHandler",         "I2C2_ER_IRQHandler",         # 33-34
+    "SPI1_IRQHandler",            "SPI2_IRQHandler",            # 35-36
+    "USART1_IRQHandler",          "USART2_IRQHandler",          # 37-38
+    "USART3_IRQHandler",          "EXTI15_10_IRQHandler",       # 39-40
+    "RTC_Alarm_IRQHandler",       "USBWakeUp_IRQHandler",       # 41-42
+    "TIM8_BRK_IRQHandler",        "TIM8_UP_IRQHandler",         # 43-44
+    "TIM8_TRG_COM_IRQHandler",    "TIM8_CC_IRQHandler",         # 45-46
+    "ADC3_IRQHandler",            "FSMC_IRQHandler",            # 47-48
+    "SDIO_IRQHandler",            "TIM5_IRQHandler",            # 49-50
+    "SPI3_IRQHandler",            "UART4_IRQHandler",           # 51-52
+    "UART5_IRQHandler",           "TIM6_IRQHandler",            # 53-54
+    "TIM7_IRQHandler",                                          # 55
+    "DMA2_Channel1_IRQHandler",   "DMA2_Channel2_IRQHandler",  # 56-57
+    "DMA2_Channel3_IRQHandler",   "DMA2_Channel4_5_IRQHandler",# 58-59
+    None, None, None, None, None, None, None, None,             # 60-67 保留
+]
+
+# F0 中断名与 F1 差异很大：EXTI 合并、TIM 组合等
+_F0_IRQ_NAMES = [
     "WWDG_IRQHandler",                "PVD_VDDIO2_IRQHandler",          # 0-1
     "RTC_IRQHandler",                 "FLASH_IRQHandler",               # 2-3
     "RCC_CRS_IRQHandler",             "EXTI0_1_IRQHandler",             # 4-5
