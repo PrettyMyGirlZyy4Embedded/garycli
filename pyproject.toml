@@ -1,0 +1,20 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Gary Dev Agent - pyproject.toml
+#
+# 此文件的唯一作用是阻止 pip / setuptools 把本目录误当成可安装包。
+#
+# 安装方式：
+#   python setup.py --auto      ← 正确
+#   pip install -e .            ← 错误，会报错并给出提示
+# ──────────────────────────────────────────────────────────────────────────────
+
+[build-system]
+# 指向一个不存在的 backend，让 pip install 立即失败并给出清晰报错，
+# 而不是把 setup.py 当 setuptools 脚本执行。
+requires = ["gary-not-a-pip-package"]
+build-backend = "gary_not_installable"
+
+[tool.gary]
+# 仅供说明，不影响任何工具行为
+description = "Gary Dev Agent 自定义安装脚本，请用 python setup.py --auto 安装"
+install_command = "python setup.py --auto"
