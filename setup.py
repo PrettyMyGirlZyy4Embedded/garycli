@@ -35,6 +35,7 @@ if len(_sys.argv) > 1 and _sys.argv[1] in _FORBIDDEN_ARGS:
 # ─────────────────────────────────────────────────────────────────────────────
 
 import os
+import sys
 import subprocess
 import platform
 import shutil
@@ -264,7 +265,7 @@ def configure_ai(auto: bool):
     import getpass as _gp
     header("配置  AI 后端接口")
     cur_key, cur_url, cur_model = _read_current_ai_config()
-    placeholder = ("YOUR_API_KEY", "", "sk-YOUR")
+    placeholder = ("YOUR_API_KEY", "sk-YOUR")
     is_configured = bool(cur_key and not any(cur_key.startswith(p) for p in placeholder))
 
     if is_configured:
@@ -301,8 +302,9 @@ def configure_ai(auto: bool):
     base_url = preset_url if preset_url else input(
         f"  {_c('33', '?')} Base URL (例: https://api.openai.com/v1): ").strip()
 
-    default_model = preset_model or cur_model or ""
-    hint = f" [{_c('36', default_model)}]" if default_model else ""
+    default_model = preset_model if preset_model else (cur_model if cur_model else "gemini-2.0-flash")
+    hint = f" [{_c('36', default_model)}]"
+    
     entered = input(f"  {_c('33', '?')} Model 名称{hint} (回车使用默认): ").strip()
     model = entered if entered else default_model
 
@@ -851,7 +853,7 @@ def verify():
 
     # AI
     cur_key, cur_url, cur_model = _read_current_ai_config()
-    placeholder = ("YOUR_API_KEY", "", "sk-YOUR")
+    placeholder = ("YOUR_API_KEY", "sk-YOUR")
     ai_ok = bool(cur_key and not any(cur_key.startswith(p) for p in placeholder))
     if ai_ok:
         ok(f"AI 接口: {cur_model}  ({cur_url[:50]})")
