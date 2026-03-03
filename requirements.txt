@@ -1,0 +1,16 @@
+# Gary Dev Agent - Python 依赖
+# 安装方式: pip install -r requirements.txt
+
+# ── 必需依赖 ──────────────────────────────────────────────────
+openai
+rich
+prompt_toolkit
+pyocd
+pyserial
+requests
+Pillow
+
+# ── 可选依赖 ──────────────────────────────────────────────────
+beautifulsoup4
+python-docx
+pyautogui
