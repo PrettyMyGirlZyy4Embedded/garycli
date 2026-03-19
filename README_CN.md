@@ -3,7 +3,7 @@
 # 🗡️ GARY CLI: The Spear Carrier
 
 **Piercing the Silicon with AI.**
-*专为 STM32 打造的 AI 原生命令行开发与调试智能体*
+*An AI-native command-line development and debugging agent built for STM32*
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python](https://img.shields.io/badge/Python-3.8+-green.svg)](https://www.python.org/)
@@ -21,189 +21,189 @@
    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝
 ```
 
-**用自然语言对话，让 AI 直接参与 STM32 开发、编译、烧录与调试。**
+**Talk to it in natural language, and let AI directly participate in STM32 development, compilation, flashing, and debugging.**
 
 <p align="center">
-  <a href="./README.md"><b>English</b></a>
+  <a href="./README.md"><b>中文</b></a>
 </p>
 
-[快速开始](#-快速开始) · [核心功能](#-核心功能) · [使用指南](#-使用指南) · [命令参考](#-命令参考) · [技能系统](#-技能系统-skills) · [常见问题](#-常见问题)
+[Quick Start](#-quick-start) · [Core Features](#-core-features) · [Usage Guide](#-usage-guide) · [Command Reference](#-command-reference) · [Skill System](#-skill-system-skills) · [FAQ](#-faq)
 
 </div>
 
 ---
 
-## ⚡ 什么是 Gary？
+## ⚡ What is Gary?
 
-传统嵌入式开发里，真正耗时的往往不是“写几段 C 代码”，而是下面这条链路：
+In traditional embedded development, the real time sink is usually not just “writing a few lines of C code,” but this full chain:
 
-**需求理解 → 外设配置 → 代码生成 → 交叉编译 → 固件烧录 → 串口验证 → 寄存器排查 → 故障修复 → 再次烧录**
+**Requirement understanding → Peripheral configuration → Code generation → Cross-compilation → Firmware flashing → Serial verification → Register inspection → Fault fixing → Reflashing**
 
-**Gary（持矛者）** 不是另一个只会“生成代码”的聊天工具。
-它是一个面向 STM32 的 **AI 开发执行器**：你描述目标，它负责生成代码、调用工具链、连接硬件、收集运行反馈，并在可验证的范围内继续修复问题。
+**Gary (The Spear Carrier)** is not just another chat tool that can only “generate code.”
+It is an **AI execution agent for STM32 development**: you describe the goal, and it generates code, invokes toolchains, connects to hardware, collects runtime feedback, and keeps fixing issues when the results are verifiable.
 
 ```text
-你说：
-  “帮我做一个 OLED 显示温湿度的程序，传感器用 AHT20”
+You say:
+  “Help me build an OLED temperature and humidity display using an AHT20 sensor.”
 
-Gary 自动执行：
-  ✓ 生成完整 main.c（HAL + I2C + AHT20 + SSD1306）
-  ✓ arm-none-eabi-gcc 交叉编译
-  ✓ 通过 SWD 或 UART ISP 烧录到 STM32
-  ✓ 监控串口输出，确认程序是否真正启动
-  ✓ 读取寄存器，判断外设状态
-  ✗ 发现 I2C 无应答 → 分析原因 → 修改代码 → 重新烧录
-  ✓ 第二轮运行成功
+Gary automatically executes:
+  ✓ Generates a complete main.c (HAL + I2C + AHT20 + SSD1306)
+  ✓ Cross-compiles with arm-none-eabi-gcc
+  ✓ Flashes the STM32 via SWD or UART ISP
+  ✓ Monitors serial output to verify that the program really started
+  ✓ Reads registers to inspect peripheral state
+  ✗ Detects no I2C response → analyzes cause → patches code → reflashes
+  ✓ Second run succeeds
 ```
 
-一句话概括：
+In one sentence:
 
-> **Gary 不是帮你“写一份 STM32 代码”，而是试图帮你完成一次 STM32 开发闭环。**
+> **Gary is not just trying to “write STM32 code for you” — it is trying to complete an STM32 development loop for you.**
 
 ---
 
-## 🎯 核心功能
+## 🎯 Core Features
 
-### 🗣️ 自然语言 → 可编译 STM32 HAL 工程代码
+### 🗣️ Natural language → compilable STM32 HAL project code
 
-你直接描述功能目标，Gary 生成完整、可交叉编译的 STM32 HAL C 代码。
+Describe the target behavior directly, and Gary generates complete STM32 HAL C code that can be cross-compiled.
 
 ```bash
-gary do "PA0 接了 LED，帮我做一个呼吸灯，PWM 频率 1kHz"
-gary do "用 I2C1 读取 MPU6050 加速度数据，串口打印"
-gary do "配置 TIM2 编码器模式读取电机转速"
+gary do "PA0 has an LED connected. Make a breathing light with 1kHz PWM"
+gary do "Read MPU6050 acceleration data over I2C1 and print it over UART"
+gary do "Configure TIM2 in encoder mode to read motor speed"
 ```
 
-适合的典型场景：
+Typical use cases:
 
 * GPIO / PWM / ADC / EXTI
-* UART / I2C / SPI / 定时器
-* OLED / 传感器 / 数码管 / 蜂鸣器
-* PID 控制 / 编码器反馈 / 电机控制
-* 裸机项目快速原型验证
+* UART / I2C / SPI / timers
+* OLED / sensors / seven-segment displays / buzzers
+* PID control / encoder feedback / motor control
+* Rapid bare-metal prototyping
 
-### 🔄 自动闭环调试
+### 🔄 Automatic closed-loop debugging
 
-Gary 的重点不是“第一次就写对”，而是：
+Gary’s priority is not “getting it right on the first try,” but this:
 
 ```text
-生成代码 → 编译 → 烧录 → 串口验证 → 读寄存器 → 分析问题 → 修改代码 → 再编译再烧录
+Generate code → Compile → Flash → Verify over serial → Read registers → Analyze issue → Patch code → Recompile and reflash
 ```
 
-它会尽量基于真实反馈继续推进，而不是只停留在“建议你这样改”。
+It tries to continue based on real feedback instead of stopping at “you may want to change this.”
 
-支持的典型诊断包括：
+Typical diagnostics include:
 
-* **编译失败**：读取 GCC 错误信息并修复语法/符号/初始化问题
-* **程序无输出**：检查启动路径、SysTick、时钟配置、串口初始化顺序
-* **HardFault**：分析 SCB 相关寄存器，辅助定位故障类型
-* **I2C 异常**：检查设备地址、总线占用、初始化顺序、NACK/ARLO 等情况
-* **最多多轮自动修复**：修不好时，会尽量把问题明确收敛到“代码问题”还是“硬件问题”
+* **Compilation failures**: reads GCC errors and fixes syntax, symbol, or initialization problems
+* **No program output**: checks startup path, SysTick, clock configuration, and UART init sequence
+* **HardFault**: inspects SCB-related registers to help locate the fault type
+* **I2C failures**: checks device address, bus lockup, init order, NACK/ARLO, and similar conditions
+* **Multiple automatic repair rounds**: if it still cannot fix the issue, it tries to narrow it down clearly to either a **code problem** or a **hardware problem**
 
-### ⚡ 一致的烧录与调试策略
+### ⚡ Consistent flashing and debugging strategy
 
-Gary 对硬件操作采用清晰的一致策略：
+Gary uses a clear and consistent hardware strategy:
 
-* **默认优先 SWD**：适合稳定烧录、寄存器读取、Fault 分析、调试闭环
-* **UART ISP 可选**：在没有调试器时可切换到串口烧录
-* **串口监控独立存在**：无论你用 SWD 还是 UART ISP，串口都用于观察程序真实运行状态
+* **SWD by default**: best for stable flashing, register access, fault analysis, and debug loops
+* **UART ISP optional**: can be used when no debugger is available
+* **Serial monitoring stays separate**: whether you flash over SWD or UART ISP, UART is still used to observe real runtime behavior
 
-也就是说：
+That means:
 
-* **SWD** 负责“烧录 + 调试”
-* **UART** 负责“日志 + 运行验证”
+* **SWD** handles “flashing + debugging”
+* **UART** handles “logs + runtime verification”
 
-这比把“烧录”和“运行反馈”混在一起更稳定，也更符合真实开发流程。
+This is more stable than mixing flashing and runtime feedback together, and better matches real embedded workflows.
 
-### 🧰 内置工具集
+### 🧰 Built-in tools
 
-| 工具               | 用途                                |
-| ---------------- | --------------------------------- |
-| **PID 自动调参**     | 分析超调、振荡、稳态误差，推荐 Kp/Ki/Kd          |
-| **I2C 总线扫描**     | 扫描设备地址，辅助识别常见芯片                   |
-| **引脚冲突检测**       | 发现 GPIO 复用冲突、SWD 误占等问题            |
-| **PWM 参数计算**     | 自动计算 PSC/ARR，快速验证目标频率             |
-| **舵机校准**         | 生成角度扫描逻辑，映射脉宽与角度                  |
-| **信号采集分析**       | 分析 ADC/传感器数据的波动、噪声和频率特征           |
-| **外设冒烟测试**       | 一键生成 GPIO/UART/I2C/SPI/ADC 最小测试代码 |
-| **Flash/RAM 分析** | 展示资源占用并预警容量问题                     |
-| **功耗估算**         | 基于外设启用状态估算功耗                      |
-| **字模生成**         | 中英文字符 → OLED 点阵数组                 |
+| Tool                         | Purpose                                                                           |
+| ---------------------------- | --------------------------------------------------------------------------------- |
+| **PID Auto Tuning**          | Analyzes overshoot, oscillation, and steady-state error, then recommends Kp/Ki/Kd |
+| **I2C Bus Scan**             | Scans device addresses and helps identify common chips                            |
+| **Pin Conflict Detection**   | Detects GPIO mux conflicts, SWD pin misuse, and similar issues                    |
+| **PWM Parameter Calculator** | Computes PSC/ARR automatically and quickly validates target frequencies           |
+| **Servo Calibration**        | Generates angle sweep logic and maps pulse width to angle                         |
+| **Signal Capture Analysis**  | Analyzes ADC/sensor waveform fluctuation, noise, and frequency characteristics    |
+| **Peripheral Smoke Tests**   | One-click minimal test code for GPIO/UART/I2C/SPI/ADC                             |
+| **Flash/RAM Analysis**       | Shows memory usage and warns about capacity issues                                |
+| **Power Estimation**         | Estimates power consumption from enabled peripherals                              |
+| **Font Generator**           | Converts Chinese/English text into OLED bitmap arrays                             |
 
 ### 🔌 Bring Your Own Key
 
-Gary 不绑定单一 AI 服务。你可以自由切换后端：
+Gary is not tied to a single AI provider. You can switch backends freely:
 
-| 服务商             | 模型                | 说明        |
-| --------------- | ----------------- | --------- |
-| DeepSeek        | deepseek-chat     | 性价比高      |
-| Kimi / Moonshot | kimi-k2.5         | 中文能力强     |
-| OpenAI          | gpt-4o            | 综合表现强     |
-| Google Gemini   | gemini-2.0-flash  | 响应快       |
-| 通义千问            | qwen-plus         | 阿里云       |
-| 智谱 GLM          | glm-4-flash       | 易接入       |
-| Ollama          | qwen2.5-coder:14b | 本地离线，完全私有 |
+| Provider        | Model             | Notes                        |
+| --------------- | ----------------- | ---------------------------- |
+| DeepSeek        | deepseek-chat     | Cost-effective               |
+| Kimi / Moonshot | kimi-k2.5         | Strong Chinese capability    |
+| OpenAI          | gpt-4o            | Strong overall performance   |
+| Google Gemini   | gemini-2.0-flash  | Fast response                |
+| Tongyi Qianwen  | qwen-plus         | Alibaba Cloud                |
+| Zhipu GLM       | glm-4-flash       | Easy to integrate            |
+| Ollama          | qwen2.5-coder:14b | Local offline, fully private |
 
-### 🧩 技能系统（Skills）
+### 🧩 Skill System (Skills)
 
-Gary 支持可插拔技能包，用于扩展能力边界。
+Gary supports pluggable skill packs to extend its capabilities.
 
 ```bash
 /skill install pid_tuner.py
 /skill install ~/Downloads/skill.zip
 /skill install https://github.com/xxx/skill.git
 /skill list
-/skill create my_tool "我的工具"
+/skill create my_tool "My tool"
 /skill export my_tool
 ```
 
-每个 Skill 可以包含：
+Each Skill can include:
 
-* Python 工具函数
-* OpenAI Function Calling Schema
-* 提示词说明
-* 依赖文件
+* Python tool functions
+* OpenAI Function Calling schemas
+* Prompt instructions
+* Dependency files
 
-安装后即可热加载，无需重启。
+Once installed, skills can be hot-loaded without restarting.
 
 ---
 
-## 🚀 快速开始
+## 🚀 Quick Start
 
-### 一键安装
+### One-line install
 
-**Linux / macOS / WSL：**
+**Linux / macOS / WSL:**
 
 ```bash
 curl -fsSL https://www.garycli.com/install.sh | bash
 ```
 
-**Windows（PowerShell）：**
+**Windows (PowerShell):**
 
 ```powershell
 irm https://www.garycli.com/install.ps1 | iex
 ```
 
-安装脚本会尝试完成：
+The install script will attempt to complete:
 
-* Python 环境检查
-* arm-none-eabi-gcc 安装或检测
-* HAL / CMSIS 相关资源准备
-* Python 依赖安装
-* 串口与调试工具安装
-* CLI 启动命令写入
+* Python environment check
+* arm-none-eabi-gcc installation or detection
+* HAL / CMSIS resource setup
+* Python dependency installation
+* Serial and debug tool installation
+* CLI launcher command setup
 
-### 手动安装
+### Manual installation
 
 ```bash
-# 1. 克隆仓库
+# 1. Clone the repository
 git clone https://github.com/PrettyMyGirlZyy4Embedded/garycli.git
 cd garycli
 
-# 2. 安装 Python 依赖
+# 2. Install Python dependencies
 pip install -r requirements.txt
 
-# 3. 安装交叉编译器
+# 3. Install the cross compiler
 # Ubuntu / Debian:
 sudo apt install gcc-arm-none-eabi
 
@@ -211,92 +211,92 @@ sudo apt install gcc-arm-none-eabi
 brew install --cask gcc-arm-embedded
 
 # Windows:
-# 从 ARM 官方或对应发行源安装 gcc-arm-none-eabi
+# Install gcc-arm-none-eabi from ARM official sources or a suitable distribution
 
-# 4. 可选：安装 UART ISP 烧录工具
+# 4. Optional: install UART ISP flashing tool
 pip install stm32loader
 
-# 5. 可选：安装 SWD 调试工具
+# 5. Optional: install SWD debugging tool
 pip install pyocd
 
-# 6. 下载 HAL 资源
+# 6. Download HAL resources
 python3 setup.py --hal
 
-# 7. 运行环境诊断
+# 7. Run environment diagnostics
 python3 stm32_agent.py --doctor
 ```
 
-### 首次配置
+### First-time configuration
 
 ```bash
 gary config
 ```
 
-按提示配置：
+Follow the prompts to configure:
 
 * API Key
 * Base URL
 * Model
-* 默认芯片型号
-* 默认串口参数（可选）
+* Default chip model
+* Default serial parameters (optional)
 
-### 环境诊断
+### Environment diagnostics
 
 ```bash
 gary doctor
 ```
 
-输出示例：
+Example output:
 
 ```text
-■ AI 接口
+■ AI Interface
   ✓ API Key   sk-abc...xyz
   ✓ Base URL  https://api.deepseek.com/v1
   ✓ Model     deepseek-chat
-  ✓ API 连通性  测试通过
+  ✓ API connectivity  OK
 
-■ 编译工具链
+■ Compilation Toolchain
   ✓ arm-none-eabi-gcc  arm-none-eabi-gcc (15.1.0)
-  ✓ HAL 资源           STM32F0xx, STM32F1xx, STM32F3xx, STM32F4xx
+  ✓ HAL resources      STM32F0xx, STM32F1xx, STM32F3xx, STM32F4xx
   ✓ CMSIS Core
 
-■ Python 依赖
+■ Python Dependencies
   ✓ openai
   ✓ rich
   ✓ prompt_toolkit
-  ✓ pyserial      (可选)
-  ✓ pyocd         (可选)
-  ✓ stm32loader   (可选)
+  ✓ pyserial      (optional)
+  ✓ pyocd         (optional)
+  ✓ stm32loader   (optional)
 
-■ 硬件探针
+■ Hardware Probes
   ✓ ST-Link V2
-  ✓ 串口 /dev/ttyUSB0
+  ✓ Serial port /dev/ttyUSB0
 
-✅ 所有核心配置正常，Gary 已就绪
+✅ All core components are ready. Gary is good to go.
 ```
 
 ---
 
-## 📖 使用指南
+## 📖 Usage Guide
 
-### 模式一：单次任务（`gary do`）
+### Mode 1: One-shot task (`gary do`)
 
-适合快速验证单一需求：
+Best for quickly validating a single requirement:
 
 ```bash
-# 仅生成 + 编译（不连接硬件）
-gary do "写一个 WS2812 灯带驱动，控制 8 颗 LED 跑彩虹效果"
+# Generate + compile only (no hardware connection)
+gary do "Write a WS2812 driver for 8 LEDs with a rainbow animation"
 
-# 生成 + 编译 + 连接硬件
-gary do "PA0 LED 闪烁，500ms 间隔" --connect
+# Generate + compile + connect to hardware
+gary do "Blink an LED on PA0 with a 500ms interval" --connect
 
-# 指定芯片型号
-gary do "读取 ADC 电压，串口打印" --chip STM32F407VET6 --connect
+# Specify chip model
+gary do "Read ADC voltage and print it over UART" --chip STM32F407VET6 --connect
 ```
 
-### 模式二：交互式对话（`gary`）
+### Mode 2: Interactive conversation (`gary`)
 
-适合多轮迭代开发：
+Best for iterative, multi-turn development:
 
 ```bash
 gary
@@ -305,80 +305,80 @@ gary --chip STM32F407VET6
 gary --connect --chip STM32F103C8T6
 ```
 
-示例：
+Example:
 
 ```text
-Gary > 帮我做一个 OLED 时钟，I2C1 接 SSD1306，显示时分秒
+Gary > Help me build an OLED clock on I2C1 with SSD1306, showing HH:MM:SS
 
-  🔧 stm32_reset_debug_attempts → 计数器已重置
+  🔧 stm32_reset_debug_attempts → counter reset
   🔧 stm32_hardware_status → chip: STM32F103C8T6, hw_connected: true
-  🔧 stm32_generate_font → 生成 "0123456789:" 字模
-  🔧 stm32_auto_flash_cycle → 编译成功 8.2KB，烧录成功
-  串口输出: Gary:BOOT → OLED Init OK → 12:34:56
+  🔧 stm32_generate_font → generated bitmap for "0123456789:"
+  🔧 stm32_auto_flash_cycle → compile success 8.2KB, flash success
+  Serial output: Gary:BOOT → OLED Init OK → 12:34:56
 
-✓ OLED 已正常显示时间
+✓ OLED is now displaying the time correctly
 ```
 
-### 模式三：增量修改
+### Mode 3: Incremental modifications
 
-Gary 会尽量基于当前项目继续修改，而不是每次都重写整个程序：
+Gary tries to continue from the current project instead of rewriting everything from scratch each time:
 
 ```text
-Gary > LED 闪烁太快了，改成 1 秒
-Gary > 改成共阳数码管
-Gary > 加一个蜂鸣器，报警时响
-Gary > 把 I2C 地址从 0x3C 改成 0x3D
+Gary > The LED is blinking too fast, change it to 1 second
+Gary > Change it to common-anode seven-segment
+Gary > Add a buzzer that sounds on alarm
+Gary > Change the I2C address from 0x3C to 0x3D
 ```
 
-适合在同一个项目上连续迭代。
+This works well for continuous iteration on the same project.
 
 ---
 
-## 📋 命令参考
+## 📋 Command Reference
 
-### 终端命令
+### Terminal commands
 
-| 命令                          | 说明            |
-| --------------------------- | ------------- |
-| `gary`                      | 启动交互式对话界面     |
-| `gary do "任务描述"`            | 单次任务模式        |
-| `gary do "任务" --connect`    | 单次任务 + 自动连接硬件 |
-| `gary --chip STM32F407VET6` | 指定芯片型号        |
-| `gary --connect`            | 启动并连接硬件       |
-| `gary config`               | 配置 AI 后端      |
-| `gary doctor`               | 环境诊断          |
+| Command                      | Description                           |
+| ---------------------------- | ------------------------------------- |
+| `gary`                       | Launch interactive conversation mode  |
+| `gary do "task description"` | One-shot task mode                    |
+| `gary do "task" --connect`   | One-shot task + auto-connect hardware |
+| `gary --chip STM32F407VET6`  | Specify chip model                    |
+| `gary --connect`             | Launch and connect hardware           |
+| `gary config`                | Configure AI backend                  |
+| `gary doctor`                | Run environment diagnostics           |
 
-### 交互式命令（在 `Gary >` 下输入）
+### Interactive commands (inside `Gary >`)
 
-| 命令                         | 说明             |
-| -------------------------- | -------------- |
-| `/connect [芯片]`            | 连接调试器或初始化硬件上下文 |
-| `/disconnect`              | 断开硬件           |
-| `/serial [端口] [波特率]`       | 连接串口           |
-| `/serial list`             | 列出可用串口         |
-| `/chip [型号]`               | 查看或切换芯片        |
-| `/flash [swd\|uart\|auto]` | 设置烧录方式         |
-| `/flash status`            | 查看烧录工具状态       |
-| `/probes`                  | 列出调试探针         |
-| `/status`                  | 查看完整硬件状态       |
-| `/config`                  | 重新配置 AI 后端     |
-| `/projects`                | 查看历史项目         |
-| `/skill list`              | 查看已安装技能        |
-| `/skill install <来源>`      | 安装技能包          |
-| `/skill create <名称>`       | 创建技能模板         |
-| `/clear`                   | 清空对话历史         |
-| `/exit`                    | 退出             |
+| Command                     | Description                                     |
+| --------------------------- | ----------------------------------------------- |
+| `/connect [chip]`           | Connect debugger or initialize hardware context |
+| `/disconnect`               | Disconnect hardware                             |
+| `/serial [port] [baudrate]` | Connect serial port                             |
+| `/serial list`              | List available serial ports                     |
+| `/chip [model]`             | Show or switch chip model                       |
+| `/flash [swd\|uart\|auto]`  | Set flashing method                             |
+| `/flash status`             | Show flashing tool status                       |
+| `/probes`                   | List debug probes                               |
+| `/status`                   | Show full hardware status                       |
+| `/config`                   | Reconfigure AI backend                          |
+| `/projects`                 | Show project history                            |
+| `/skill list`               | List installed skills                           |
+| `/skill install <source>`   | Install a skill pack                            |
+| `/skill create <name>`      | Create a skill template                         |
+| `/clear`                    | Clear conversation history                      |
+| `/exit`                     | Exit                                            |
 
 ---
 
-## 🔌 硬件连接建议
+## 🔌 Hardware Connection Recommendations
 
-### 推荐方案：SWD + 串口日志
+### Recommended setup: SWD + serial logging
 
-这是最稳定的组合：
+This is the most stable combination:
 
-* **SWD**：负责烧录、寄存器读取、故障调试
-* **UART**：负责串口监控与启动确认
+* **SWD**: flashing, register inspection, fault debugging
+* **UART**: serial monitoring and startup verification
 
 ```text
 ST-Link / J-Link      STM32
@@ -393,21 +393,21 @@ USB-TTL               STM32
   GND     ─────────── GND
 ```
 
-### 纯串口方案（无调试器）
+### Pure serial setup (no debugger)
 
-如果手头没有 ST-Link，也可以只接 USB-TTL，使用 UART ISP 烧录，但能力会受限：
+If you do not have an ST-Link, you can also use only a USB-TTL adapter and flash over UART ISP, but capability will be limited:
 
-* 可以烧录
-* 可以看串口输出
-* **不能像 SWD 那样方便地读寄存器和分析 Fault**
+* Flashing is possible
+* Serial output is visible
+* **Register reads and fault analysis are not as convenient as with SWD**
 
-所以推荐优先使用 SWD。
+So SWD is still strongly recommended when available.
 
 ---
 
-## 🧩 技能系统 (Skills)
+## 🧩 Skill System (Skills)
 
-Gary 支持通过技能包扩展能力。一个标准 Skill 目录如下：
+Gary supports capability extensions through skill packs. A standard Skill directory looks like this:
 
 ```text
 ~/.gary/skills/
@@ -421,7 +421,7 @@ Gary 支持通过技能包扩展能力。一个标准 Skill 目录如下：
 └── _disabled/
 ```
 
-### 安装技能
+### Install a skill
 
 ```bash
 /skill install stm32_extra_tools.py
@@ -430,7 +430,7 @@ Gary 支持通过技能包扩展能力。一个标准 Skill 目录如下：
 /skill install ~/my_skills/sensor_kit/
 ```
 
-### 管理技能
+### Manage skills
 
 ```bash
 /skill list
@@ -441,39 +441,39 @@ Gary 支持通过技能包扩展能力。一个标准 Skill 目录如下：
 /skill reload
 ```
 
-### 开发自己的 Skill
+### Build your own Skill
 
 ```bash
-# 1. 创建模板
-/skill create motor_driver "直流电机 PID 控制工具"
+# 1. Create a template
+/skill create motor_driver "DC motor PID control tool"
 
-# 2. 编辑生成的文件
+# 2. Edit the generated files
 # ~/.gary/skills/motor_driver/tools.py
 # ~/.gary/skills/motor_driver/schemas.json
 # ~/.gary/skills/motor_driver/prompt.md
 
-# 3. 热重载
+# 3. Hot reload
 /skill reload
 
-# 4. 导出分享
+# 4. Export for sharing
 /skill export motor_driver
 ```
 
-### Skill 开发规范
+### Skill development spec
 
-**tools.py**：
+**tools.py**:
 
 ```python
 def motor_set_speed(rpm: int) -> dict:
-    """设置电机转速"""
-    return {"success": True, "message": f"目标转速: {rpm} RPM"}
+    """Set motor speed"""
+    return {"success": True, "message": f"Target speed: {rpm} RPM"}
 
 TOOLS_MAP = {
     "motor_set_speed": motor_set_speed,
 }
 ```
 
-**schemas.json**：
+**schemas.json**:
 
 ```json
 [
@@ -481,13 +481,13 @@ TOOLS_MAP = {
     "type": "function",
     "function": {
       "name": "motor_set_speed",
-      "description": "设置直流电机目标转速",
+      "description": "Set the target speed of a DC motor",
       "parameters": {
         "type": "object",
         "properties": {
           "rpm": {
             "type": "integer",
-            "description": "目标转速 RPM"
+            "description": "Target speed in RPM"
           }
         },
         "required": ["rpm"]
@@ -497,168 +497,168 @@ TOOLS_MAP = {
 ]
 ```
 
-**prompt.md**：
+**prompt.md**:
 
 ```markdown
-## 电机控制
-用户要控制电机时，调用 motor_set_speed 设置目标转速。
+## Motor Control
+When the user wants to control a motor, call motor_set_speed to set the target RPM.
 ```
 
 ---
 
-## 🏗️ 架构
+## 🏗️ Architecture
 
 ```text
 ┌──────────────────────────────────────────────────────┐
 │                    Gary CLI (TUI)                    │
 │              rich + prompt_toolkit                   │
 ├──────────────────────────────────────────────────────┤
-│                   AI 对话引擎                        │
-│         流式对话 + Function Calling                  │
+│                   AI Conversation Engine             │
+│         Streaming dialogue + Function Calling        │
 │   DeepSeek │ Kimi │ GPT │ Gemini │ Ollama │ ...     │
 ├──────────────┬──────────────┬────────────────────────┤
-│  代码生成     │   编译器      │    硬件后端            │
-│  HAL 模板     │  GCC Cross   │  ┌─────────────────┐  │
-│  历史项目复用 │  Compiler    │  │ SWD（默认）      │  │
-│  经验与模板库 │              │  │ pyocd            │  │
-│              │              │  ├─────────────────┤  │
-│              │              │  │ UART ISP（可选） │  │
-│              │              │  │ stm32loader      │  │
-│              │              │  ├─────────────────┤  │
-│              │              │  │ 串口监控         │  │
-│              │              │  │ pyserial         │  │
-│              │              │  └─────────────────┘  │
+│  Code Gen     │   Compiler    │   Hardware Backend    │
+│  HAL templates │  GCC Cross   │  ┌─────────────────┐  │
+│  Project reuse │  Compiler    │  │ SWD (default)   │  │
+│  Template base │              │  │ pyocd           │  │
+│                │              │  ├─────────────────┤  │
+│                │              │  │ UART ISP opt.   │  │
+│                │              │  │ stm32loader     │  │
+│                │              │  ├─────────────────┤  │
+│                │              │  │ Serial monitor  │  │
+│                │              │  │ pyserial        │  │
+│                │              │  └─────────────────┘  │
 ├──────────────┴──────────────┴────────────────────────┤
-│                   技能系统 (Skills)                  │
-│   PID 调参 │ I2C 扫描 │ PWM 工具 │ 字模生成 │ ...    │
+│                   Skill System (Skills)              │
+│   PID tuning │ I2C scan │ PWM tools │ Font gen │ ... │
 └──────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## <a name="supported-chips"></a> 📟 支持的芯片
+## <a name="supported-chips"></a> 📟 Supported Chips
 
-当前重点支持以下 STM32 系列：
+Gary currently focuses on the following STM32 series:
 
-| 系列          | 典型型号                         | Flash       | RAM       |
+| Series      | Typical models               | Flash       | RAM       |
 | ----------- | ---------------------------- | ----------- | --------- |
-| **STM32F0** | F030F4, F030C8, F072CB       | 16-128 KB   | 4-16 KB   |
-| **STM32F1** | F103C8T6, F103RCT6, F103ZET6 | 64-512 KB   | 20-64 KB  |
+| **STM32F0** | F030F4, F030C8, F072CB       | 16–128 KB   | 4–16 KB   |
+| **STM32F1** | F103C8T6, F103RCT6, F103ZET6 | 64–512 KB   | 20–64 KB  |
 | **STM32F3** | F303CCT6, F303RCT6           | 256 KB      | 40 KB     |
-| **STM32F4** | F401CCU6, F407VET6, F411CEU6 | 256-1024 KB | 64-128 KB |
+| **STM32F4** | F401CCU6, F407VET6, F411CEU6 | 256–1024 KB | 64–128 KB |
 
-> 其他型号可能可以通过补充 HAL / CMSIS 资源和模板继续适配，但当前 README 只对上述系列做明确承诺。
-
----
-
-## 💡 实战示例
-
-### 🔰 LED 闪烁
-
-```text
-Gary > 帮我做一个 LED 闪烁，PA0 引脚，500ms 间隔
-```
-
-### 🔢 数码管显示
-
-```text
-Gary > 4 位共阳数码管，PA0-PA7 接段选，PB0-PB3 接位选，显示计数器
-```
-
-### 📡 传感器读取
-
-```text
-Gary > I2C1 接 AHT20 温湿度传感器，串口打印温度和湿度
-Gary > 再加个 SSD1306 OLED 显示温度
-```
-
-### 🎛️ PID 电机控速
-
-```text
-Gary > 直流电机 PID 速度控制：TIM2 CH1 输出 PWM，TIM3 编码器读反馈，目标 500rpm
-```
-
-### 🔍 I2C 排查
-
-```text
-Gary > 我接了几个 I2C 设备但不确定地址，帮我扫描一下
-```
-
-### 🎵 蜂鸣器音乐
-
-```text
-Gary > 无源蜂鸣器接 PA1，帮我播放一段《小星星》
-```
-
-### 🖥️ OLED 中文显示
-
-```text
-Gary > OLED 显示中文“你好世界”，字体 16x16
-```
+> Other models may also work by adding HAL / CMSIS resources and templates, but this README only makes explicit commitments for the series listed above.
 
 ---
 
-## 📁 项目结构
+## 💡 Practical Examples
 
-以下结构更贴近当前仓库的实际组织方式：
+### 🔰 LED blink
+
+```text
+Gary > Help me make an LED blink on PA0 with a 500ms interval
+```
+
+### 🔢 Seven-segment display
+
+```text
+Gary > A 4-digit common-anode seven-segment display, PA0-PA7 for segment select, PB0-PB3 for digit select, show a counter
+```
+
+### 📡 Sensor reading
+
+```text
+Gary > Connect an AHT20 temperature and humidity sensor to I2C1 and print temperature and humidity over UART
+Gary > Now add an SSD1306 OLED to display the temperature too
+```
+
+### 🎛️ PID motor speed control
+
+```text
+Gary > DC motor PID speed control: TIM2 CH1 outputs PWM, TIM3 encoder reads feedback, target 500rpm
+```
+
+### 🔍 I2C troubleshooting
+
+```text
+Gary > I connected several I2C devices but I’m not sure about the addresses, help me scan them
+```
+
+### 🎵 Buzzer music
+
+```text
+Gary > A passive buzzer is connected to PA1. Help me play Twinkle Twinkle Little Star
+```
+
+### 🖥️ Chinese text on OLED
+
+```text
+Gary > Display the Chinese text “你好世界” on the OLED with a 16x16 font
+```
+
+---
+
+## 📁 Project Structure
+
+This layout is closer to the repository’s current structure:
 
 ```text
 garycli/
-├── stm32_agent.py          # 主程序：TUI + AI 对话 + 工具调度
-├── compiler.py             # GCC 交叉编译封装
-├── config.py               # 配置文件与路径管理
-├── setup.py                # 安装与初始化脚本
-├── stm32_extra_tools.py    # 扩展工具集
-├── gary_skills.py          # 技能系统管理器
-├── requirements.txt        # Python 依赖
-├── install.sh              # Linux / macOS / WSL 安装脚本
-├── install.ps1             # Windows 安装脚本
-└── ~/.gary/                # 用户数据目录
-    ├── skills/             # 已安装技能
-    ├── projects/           # 历史项目存档
-    ├── templates/          # 模板库
-    └── member.md           # 经验库 / 记忆
+├── stm32_agent.py          # Main program: TUI + AI dialogue + tool orchestration
+├── compiler.py             # GCC cross-compilation wrapper
+├── config.py               # Config files and path management
+├── setup.py                # Installation and initialization script
+├── stm32_extra_tools.py    # Extra tool collection
+├── gary_skills.py          # Skill system manager
+├── requirements.txt        # Python dependencies
+├── install.sh              # Linux / macOS / WSL install script
+├── install.ps1             # Windows install script
+└── ~/.gary/                # User data directory
+    ├── skills/             # Installed skills
+    ├── projects/           # Historical project archives
+    ├── templates/          # Template library
+    └── member.md           # Knowledge / memory base
 ```
 
 ---
 
-## ❓ 常见问题
+## ❓ FAQ
 
-### 安装相关
+### Installation
 
 <details>
-<summary><b>Q: arm-none-eabi-gcc 安装后找不到？</b></summary>
+<summary><b>Q: I installed arm-none-eabi-gcc, but it still cannot be found.</b></summary>
 
-确认已加入 PATH：
+Confirm it is in your PATH:
 
 ```bash
 which arm-none-eabi-gcc
 ```
 
-若没有输出，请手动加入 PATH，或执行 `gary doctor` 查看诊断结果。
+If nothing is returned, add it to PATH manually or run `gary doctor` for diagnosis.
 
 </details>
 
 <details>
-<summary><b>Q: HAL 资源下载失败？</b></summary>
+<summary><b>Q: HAL resource download failed.</b></summary>
 
 ```bash
 python3 setup.py --hal
-# 或指定系列
+# Or specify families
 python3 setup.py --hal f1 f4
 ```
 
 </details>
 
 <details>
-<summary><b>Q: Windows 上串口权限或驱动异常？</b></summary>
+<summary><b>Q: Serial port permissions or drivers are broken on Windows.</b></summary>
 
-确认已安装 CH340 / CP2102 驱动，并在设备管理器中看到对应 COM 口。
+Make sure the CH340 / CP2102 driver is installed and that the corresponding COM port appears in Device Manager.
 
 </details>
 
 <details>
-<summary><b>Q: Linux 上串口打不开（Permission denied）？</b></summary>
+<summary><b>Q: On Linux, opening the serial port returns Permission denied.</b></summary>
 
 ```bash
 sudo usermod -aG dialout $USER
@@ -667,99 +667,99 @@ newgrp dialout
 
 </details>
 
-### 使用相关
+### Usage
 
 <details>
-<summary><b>Q: 串口烧录没有响应？</b></summary>
+<summary><b>Q: UART flashing does not respond.</b></summary>
 
-检查：
+Check the following:
 
-1. BOOT0 是否拉高到下载模式
-2. 板子是否复位
-3. TX / RX 是否交叉连接
-4. 端口与波特率是否正确
+1. Whether BOOT0 is pulled high for download mode
+2. Whether the board has been reset
+3. Whether TX / RX are cross-connected
+4. Whether the port and baudrate are correct
 
 </details>
 
 <details>
-<summary><b>Q: 编译报错 undefined reference to _sbrk？</b></summary>
+<summary><b>Q: Compilation fails with undefined reference to _sbrk.</b></summary>
 
-通常说明代码里引入了 `printf` / `sprintf` / `malloc` 等依赖堆实现的符号。裸机最小工程建议避免直接使用这些函数。
-
-</details>
-
-<details>
-<summary><b>Q: HardFault 怎么排查？</b></summary>
-
-推荐使用 SWD 连接。Gary 会结合寄存器信息辅助判断：
-
-* `PRECISERR`：常见于访问未就绪外设
-* `UNDEFINSTR`：可能是栈损坏、跳转错误或指令异常
-* `IACCVIOL`：可能访问了非法代码区
+This usually means the code pulls in symbols that depend on heap support, such as `printf`, `sprintf`, or `malloc`. For minimal bare-metal projects, it is better to avoid these directly.
 
 </details>
 
 <details>
-<summary><b>Q: 可以用 Ollama 本地模型吗？</b></summary>
+<summary><b>Q: How do I debug a HardFault?</b></summary>
 
-可以。运行 `gary config` 后选择 Ollama，建议优先使用函数调用能力相对更稳定的代码模型。
+SWD is recommended. Gary can use register information to help classify the issue:
+
+* `PRECISERR`: often caused by accessing a peripheral before it is ready
+* `UNDEFINSTR`: may indicate stack corruption, bad branching, or invalid instructions
+* `IACCVIOL`: may indicate access to an illegal code region
 
 </details>
 
 <details>
-<summary><b>Q: 支持 Arduino / ESP32 吗？</b></summary>
+<summary><b>Q: Can I use a local model through Ollama?</b></summary>
 
-当前主目标是 STM32。其他平台计划后续扩展。
+Yes. Run `gary config` and select Ollama. Models with more stable function-calling behavior are recommended.
+
+</details>
+
+<details>
+<summary><b>Q: Does it support Arduino or ESP32?</b></summary>
+
+STM32 is the current primary target. Other platforms are planned for future expansion.
 
 </details>
 
 ---
 
-## 🗺️ 路线图
+## 🗺️ Roadmap
 
-* [x] STM32F0 / F1 / F3 / F4 基础支持
-* [x] UART ISP 烧录支持
-* [x] SWD 调试与寄存器读取
-* [x] 技能系统（Skills）
-* [x] 模板库与经验库雏形
-* [ ] 技能市场（在线浏览 / 安装社区技能）
-* [ ] 串口数据实时可视化
-* [ ] STM32CubeMX 项目导入
-* [ ] VS Code 扩展
-* [ ] ESP32 支持
+* [x] Basic support for STM32F0 / F1 / F3 / F4
+* [x] UART ISP flashing support
+* [x] SWD debugging and register inspection
+* [x] Skill system (Skills)
+* [x] Early template library and experience base
+* [ ] Skill marketplace (browse / install community skills online)
+* [ ] Real-time serial data visualization
+* [ ] STM32CubeMX project import
+* [ ] VS Code extension
+* [ ] ESP32 support
 
 ---
 
-## 🤝 贡献
+## 🤝 Contributing
 
-欢迎 Issue 和 PR。尤其欢迎以下方向：
+Issues and PRs are welcome. Contributions are especially appreciated in these areas:
 
-* 新的 Skill 包
-* 更多 STM32 系列支持
-* 文档改进与翻译
-* 故障复现与修复
-* 示例工程与演示视频
+* New Skill packs
+* More STM32 family support
+* Documentation improvements and translations
+* Fault reproduction and fixes
+* Example projects and demo videos
 
-### 贡献 Skill
+### Contributing a Skill
 
 ```bash
-# 1. 创建模板
-/skill create my_awesome_tool "我的工具"
+# 1. Create a template
+/skill create my_awesome_tool "My tool"
 
-# 2. 开发与测试
-# 编辑 ~/.gary/skills/my_awesome_tool/
+# 2. Develop and test
+# Edit ~/.gary/skills/my_awesome_tool/
 
-# 3. 导出
+# 3. Export
 /skill export my_awesome_tool
 
-# 4. 提交 PR
+# 4. Submit a PR
 ```
 
 ---
 
-## 📜 协议
+## 📜 License
 
-本项目采用 [Apache-2.0 License](https://opensource.org/licenses/Apache-2.0) 开源。
+This project is released under the [Apache-2.0 License](https://opensource.org/licenses/Apache-2.0).
 
 ---
 
@@ -767,6 +767,6 @@ newgrp dialout
 
 **🗡️ Just Gary Do It.**
 
-[官网](https://www.garycli.com) · [GitHub](https://github.com/PrettyMyGirlZyy4Embedded/garycli) · [提交 Issue](https://github.com/PrettyMyGirlZyy4Embedded/garycli/issues)
+[Website](https://www.garycli.com) · [GitHub](https://github.com/PrettyMyGirlZyy4Embedded/garycli) · [Submit an Issue](https://github.com/PrettyMyGirlZyy4Embedded/garycli/issues)
 
 </div>
