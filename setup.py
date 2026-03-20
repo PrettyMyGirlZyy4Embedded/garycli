@@ -121,9 +121,17 @@ PIP = [sys.executable, "-m", "pip"]
 # ─────────────────────────────────────────────────────────────────────────────
 # 工具函数
 # ─────────────────────────────────────────────────────────────────────────────
-def _run(cmd, shell=False, capture=True, input_text=None, **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, shell=shell, capture_output=capture,
-                          text=True, input=input_text, **kw)
+def _run(cmd, shell=False, capture=True, input_text=None, timeout=None, **kw) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(cmd, shell=shell, capture_output=capture,
+                              text=True, input=input_text, timeout=timeout, **kw)
+    except subprocess.TimeoutExpired:
+        cmd_name = cmd[0] if isinstance(cmd, list) else str(cmd)
+        warn(f"命令超时（>{timeout}s）: {cmd_name}")
+        return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="timeout")
+    except FileNotFoundError:
+        cmd_name = cmd[0] if isinstance(cmd, list) else str(cmd)
+        return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr=f"{cmd_name}: not found")
 
 def _which(name: str) -> Optional[str]:
     return shutil.which(name)
@@ -139,33 +147,38 @@ def _distro() -> tuple:
     except Exception:
         return "", ""
 
-def _download(url: str, dest: Path, label: str = "") -> bool:
+def _download(url: str, dest: Path, label: str = "", retries: int = 3) -> bool:
     import urllib.request
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            total = int(resp.headers.get("Content-Length", 0))
-            downloaded = 0
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            with open(dest, "wb") as f:
-                while True:
-                    chunk = resp.read(65536)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total and label:
-                        pct = min(downloaded * 100 // total, 100)
-                        bar = "#" * (pct // 5) + "." * (20 - pct // 5)
-                        print(f"\r    [{bar}] {pct:3d}%  {label[:40]}", end="", flush=True)
-        if label:
-            print()
-        return True
-    except Exception as e:
-        if label:
-            print()
-        err(f"下载失败 [{label}]: {e}")
-        return False
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    for attempt in range(1, retries + 1):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                total = int(resp.headers.get("Content-Length", 0))
+                downloaded = 0
+                with open(dest, "wb") as f:
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total and label:
+                            pct = min(downloaded * 100 // total, 100)
+                            bar = "#" * (pct // 5) + "." * (20 - pct // 5)
+                            print(f"\r    [{bar}] {pct:3d}%  {label[:40]}", end="", flush=True)
+            if label:
+                print()
+            return True
+        except Exception as e:
+            if label:
+                print()
+            dest.unlink(missing_ok=True)  # 清理残破的部分文件
+            if attempt < retries:
+                warn(f"下载失败（第 {attempt}/{retries} 次），重试中... [{label}]: {e}")
+            else:
+                err(f"下载失败（已重试 {retries} 次）[{label}]: {e}")
+    return False
 
 def _detect_zip_prefix(zip_path: Path) -> str:
     import zipfile
@@ -337,6 +350,102 @@ def configure_ai(auto: bool):
         err("写入 config.py 失败")
 
 # ─────────────────────────────────────────────────────────────────────────────
+# STEP 0b: 目标芯片配置
+# ─────────────────────────────────────────────────────────────────────────────
+
+# (显示名, pyocd pack 代表芯片, 系列描述)
+_CHIP_PRESETS = [
+    ("STM32F103C8",  "stm32f103c8", "Blue Pill / 蓝板"),
+    ("STM32F411CEU", "stm32f411ce", "Black Pill / 黑板"),
+    ("STM32F407VE",  "stm32f407ve", "F407 Discovery"),
+    ("STM32F401CC",  "stm32f401cc", "F401 Black Pill"),
+    ("STM32F030C8",  "stm32f030c8", "F0xx 入门系列"),
+    ("STM32F303CC",  "stm32f303cc", "F3xx DSP/FPU 系列"),
+    ("自定义",        "",            "手动输入"),
+]
+
+# 芯片系列 → pyocd pack 代表芯片（用于 pack install 和已装检测）
+_FAMILY_PACK_TARGET = {
+    "f0": "stm32f030c8",
+    "f1": "stm32f103c8",
+    "f3": "stm32f303cc",
+    "f4": "stm32f411ce",
+}
+
+def _detect_chip_family(chip: str) -> str:
+    """从芯片型号推断系列，例如 STM32F411CEU6 → f4"""
+    import re as _re
+    m = _re.search(r'stm32(f\d)', chip.lower())
+    return m.group(1) if m else ""
+
+def _read_default_chip() -> str:
+    import re as _re
+    p = SCRIPT_DIR / "config.py"
+    if not p.exists():
+        return ""
+    m = _re.search(r'^DEFAULT_CHIP\s*=\s*["\']([^"\']*)["\']', p.read_text(encoding="utf-8"), _re.MULTILINE)
+    return m.group(1).strip() if m else ""
+
+def _write_default_chip(chip: str) -> bool:
+    import re as _re
+    p = SCRIPT_DIR / "config.py"
+    if not p.exists():
+        return False
+    text = p.read_text(encoding="utf-8")
+    pattern = r'^(DEFAULT_CHIP\s*=\s*).*$'
+    if _re.search(pattern, text, _re.MULTILINE):
+        text = _re.sub(pattern, f'DEFAULT_CHIP = "{chip}"', text, flags=_re.MULTILINE)
+    else:
+        text += f'\nDEFAULT_CHIP = "{chip}"\n'
+    p.write_text(text, encoding="utf-8")
+    return True
+
+def configure_chip(auto: bool):
+    header("Step 0b  目标芯片配置")
+    cur = _read_default_chip()
+    if cur:
+        ok(f"当前芯片: {cur}")
+        if auto or not ask("重新选择目标芯片？", default="n"):
+            return
+    elif auto:
+        warn("未配置目标芯片，pyocd 将以通用 Cortex-M 模式运行（可用 /chip 命令后续切换）")
+        return
+
+    print(f"\n  {_c('1;36', '请选择目标芯片：')}")
+    for i, (name, _, desc) in enumerate(_CHIP_PRESETS, 1):
+        print(f"    {_c('33', str(i))}.  {name:<18}{_c('2', desc)}")
+    print()
+
+    choice = ""
+    valid = [str(i) for i in range(1, len(_CHIP_PRESETS) + 1)]
+    while choice not in valid:
+        try:
+            choice = input(f"  {_c('33', '?')} 输入序号 [1-{len(_CHIP_PRESETS)}，回车跳过]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            warn("已跳过芯片配置，可后续用 /chip 命令切换")
+            return
+        if not choice:
+            warn("已跳过芯片配置，可后续用 /chip 命令切换")
+            return
+
+    idx = int(choice) - 1
+    chip_name, _, _ = _CHIP_PRESETS[idx]
+    if chip_name == "自定义":
+        try:
+            chip_name = input(f"  {_c('33', '?')} 输入芯片型号（如 STM32F411CEU6）: ").strip().upper()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if not chip_name:
+            return
+
+    if _write_default_chip(chip_name):
+        ok(f"目标芯片已写入 config.py: {chip_name}")
+    else:
+        warn("写入失败，请手动修改 config.py 中的 DEFAULT_CHIP")
+
+# ─────────────────────────────────────────────────────────────────────────────
 # STEP 1: Python 版本
 # ─────────────────────────────────────────────────────────────────────────────
 def check_python():
@@ -482,7 +591,8 @@ def _add_to_path(new_path: str):
     for sh in candidates:
         if sh.exists():
             if new_path not in sh.read_text():
-                sh.open("a").write(line)
+                with sh.open("a") as f:
+                    f.write(line)
             info(f"  PATH 已写入 {sh}")
             return
 
@@ -729,6 +839,33 @@ def setup_udev(auto: bool):
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 7: pyocd 支持包
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _pyocd_installed_targets() -> str:
+    """返回已安装目标列表（小写），失败返回空字符串"""
+    r = _run([sys.executable, "-m", "pyocd", "list", "--targets"], timeout=30)
+    return r.stdout.lower() if r.returncode == 0 else ""
+
+def _build_pack_list() -> list:
+    """
+    根据 DEFAULT_CHIP 决定需要安装的 pack 列表。
+    返回 [(check_target, install_chip, label), ...]
+    """
+    chip = _read_default_chip()
+    family = _detect_chip_family(chip) if chip else ""
+    pack_target = _FAMILY_PACK_TARGET.get(family)
+
+    if pack_target:
+        # 仅安装用户芯片所属系列
+        family_label = f"STM32{family.upper()}xx"
+        chip_hint = f"（{chip}）" if chip else ""
+        return [(pack_target, pack_target, f"{family_label} 支持包{chip_hint}")]
+    else:
+        # 未配置芯片时，安装最常用的 F1xx + F4xx
+        return [
+            ("stm32f103c8", "stm32f103c8", "STM32F1xx 支持包"),
+            ("stm32f411ce", "stm32f411ce", "STM32F4xx 支持包"),
+        ]
+
 def setup_pyocd(auto: bool):
     header("Step 7  pyocd 芯片支持包（可选）")
     try:
@@ -737,23 +874,64 @@ def setup_pyocd(auto: bool):
     except ImportError:
         warn("pyocd 未安装，跳过（请先完成 Step 3）")
         return
-    r = _run([sys.executable, "-m", "pyocd", "pack", "find", "stm32f103"])
-    if r.returncode == 0 and "stm32f103" in r.stdout.lower():
-        ok("STM32F1 支持包已安装")
+
+    packs = _build_pack_list()
+    targets = _pyocd_installed_targets()
+    missing = []
+    for check, install, label in packs:
+        if check in targets:
+            ok(f"{label}已安装")
+        else:
+            missing.append((install, label))
+
+    if not missing:
         return
-    if auto or ask("安装 pyocd STM32F1/F4/F411 支持包（约 30 MB）？"):
-        info("更新 pack 索引...")
-        _run([sys.executable, "-m", "pyocd", "pack", "update"], capture=False)
-        info("安装 STM32F103x8 / STM32F407xx / STM32F411CE 支持包...")
-        _run([sys.executable, "-m", "pyocd", "pack", "install",
-              "STM32F103x8", "STM32F407xx", "STM32F411CE"], capture=False)
-        ok("pyocd 支持包安装完成")
+
+    labels = " / ".join(lb for _, lb in missing)
+    if not (auto or ask(f"安装 {labels}（约 15-30 MB）？")):
+        info("已跳过，pyocd 将以通用 Cortex-M 模式运行（无法烧录 flash）")
+        return
+
+    info("更新 pack 索引...")
+    r = _run([sys.executable, "-m", "pyocd", "pack", "update"], capture=False, timeout=120)
+    if r.returncode != 0:
+        warn("pack 索引更新失败，尝试继续安装...")
+
+    failed = []
+    for install_chip, label in missing:
+        info(f"安装 {label}...")
+        r = _run([sys.executable, "-m", "pyocd", "pack", "install", install_chip],
+                 capture=False, timeout=180)
+        if install_chip in _pyocd_installed_targets():
+            ok(f"{label}安装成功")
+        else:
+            failed.append(install_chip)
+            warn(f"{label}安装失败，可手动运行: pyocd pack install {install_chip}")
+
+    if failed:
+        warn("部分支持包安装失败，/connect 时将以通用 Cortex-M 模式运行（无法烧录 flash）")
     else:
-        info("已跳过，pyocd 仍可通过通用 Cortex-M 模式识别大部分芯片")
+        ok("pyocd 芯片支持包安装完成")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 8: 安装 gary 命令
 # ─────────────────────────────────────────────────────────────────────────────
+def _ensure_unix_path(bin_dir: Path):
+    if str(bin_dir) in os.environ.get("PATH", ""):
+        return
+    home = Path.home()
+    candidates = [home / ".zshrc", home / ".bash_profile"] if IS_MAC else [home / ".bashrc", home / ".zshrc"]
+    line = '\nexport PATH="$HOME/.local/bin:$PATH"  # gary command\n'
+    for sh in candidates:
+        if sh.exists():
+            if ".local/bin" not in sh.read_text(encoding="utf-8", errors="ignore"):
+                with open(sh, "a", encoding="utf-8") as f:
+                    f.write(line)
+                info(f"  PATH 已写入 {sh}（重新打开终端后生效）")
+            return
+    os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+
+
 _GARY_SH = """\
 #!/bin/sh
 # gary - Gary Dev Agent 命令行入口（自动生成）
@@ -789,24 +967,6 @@ if "%1"=="do" (
 )
 """
 
-def _get_win_install_dir() -> Path:
-    """
-    返回 Windows 下 gary.bat 的安装目录。
-
-    修复原始 Bug：
-      原代码用 Path(sys.executable).parent / "Scripts"，
-      在虚拟环境下 sys.executable = .venv\\Scripts\\python.exe，
-      parent = .venv\\Scripts（存在），再拼 "Scripts" 得到
-      .venv\\Scripts\\Scripts（不存在），写入时报 FileNotFoundError。
-
-    修复方案：
-      统一写到 %USERPROFILE%\\.local\\bin，与 install.ps1 行为一致，
-      该目录已由 PowerShell 安装脚本加入用户 PATH。
-    """
-    install_dir = Path.home() / ".local" / "bin"
-    install_dir.mkdir(parents=True, exist_ok=True)
-    return install_dir
-
 def install_gary_command(auto: bool):
     header("Step 8  安装 gary 命令")
     if not AGENT_SCRIPT.exists():
@@ -819,30 +979,41 @@ def install_gary_command(auto: bool):
 
 def _install_gary_unix(auto: bool):
     install_dir = Path.home() / ".local" / "bin"
-    gary_path   = install_dir / "gary"
+    gary_path = install_dir / "gary"
+    expected_content = _GARY_SH.format(
+        agent_script=str(AGENT_SCRIPT),
+        python=sys.executable
+    )
+
     if gary_path.exists():
-        if str(AGENT_SCRIPT) in gary_path.read_text():
+        existing = gary_path.read_text(encoding="utf-8", errors="ignore")
+        if existing == expected_content:
             ok(f"gary 命令已安装: {gary_path}")
             _ensure_unix_path(install_dir)
             return
         info("检测到旧版 gary，更新中...")
+
     if not (auto or ask(f"安装 gary 命令到 {install_dir}？")):
         info(f"手动安装：ln -s {AGENT_SCRIPT} ~/.local/bin/gary && chmod +x ~/.local/bin/gary")
         return
+
     install_dir.mkdir(parents=True, exist_ok=True)
-    content = _GARY_SH.format(agent_script=str(AGENT_SCRIPT), python=sys.executable)
-    gary_path.write_text(content)
+    gary_path.write_text(expected_content, encoding="utf-8")
     gary_path.chmod(gary_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     ok(f"gary 命令已安装: {gary_path}")
     _ensure_unix_path(install_dir)
 
 def _install_gary_win(auto: bool):
     install_dir = _get_win_install_dir()
-    gary_bat    = install_dir / "gary.bat"
+    gary_bat = install_dir / "gary.bat"
+    expected_content = _GARY_BAT.format(
+        agent_script=str(AGENT_SCRIPT),
+        python=sys.executable
+    )
 
     if gary_bat.exists():
         existing = gary_bat.read_text(encoding="utf-8", errors="ignore")
-        if str(AGENT_SCRIPT) in existing:
+        if existing == expected_content:
             ok(f"gary.bat 已安装: {gary_bat}")
             _check_win_path(install_dir)
             return
@@ -853,12 +1024,9 @@ def _install_gary_win(auto: bool):
         info(f'  "{sys.executable}" "{AGENT_SCRIPT}" %*')
         return
 
-    content = _GARY_BAT.format(
-        agent_script=str(AGENT_SCRIPT),
-        python=sys.executable
-    )
     try:
-        gary_bat.write_text(content, encoding="utf-8")
+        install_dir.mkdir(parents=True, exist_ok=True)
+        gary_bat.write_text(expected_content, encoding="utf-8")
         ok(f"gary.bat 已安装: {gary_bat}")
         _check_win_path(install_dir)
     except Exception as e:
@@ -867,32 +1035,6 @@ def _install_gary_win(auto: bool):
         info("请手动在 PowerShell 中执行：")
         info(f'  New-Item -Path "{install_dir}" -ItemType Directory -Force')
         info(f'  Set-Content "{gary_bat}" \'@echo off\\n"{sys.executable}" "{AGENT_SCRIPT}" %*\'')
-
-def _ensure_unix_path(bin_dir: Path):
-    if str(bin_dir) in os.environ.get("PATH", ""):
-        return
-    home = Path.home()
-    candidates = [home / ".zshrc", home / ".bash_profile"] if IS_MAC \
-                 else [home / ".bashrc", home / ".zshrc"]
-    line = '\nexport PATH="$HOME/.local/bin:$PATH"  # gary command\n'
-    for sh in candidates:
-        if sh.exists():
-            if ".local/bin" not in sh.read_text():
-                with open(sh, "a") as f:
-                    f.write(line)
-                info(f"  PATH 已写入 {sh}（重新打开终端后生效）")
-            return
-    os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
-
-def _check_win_path(install_dir: Path):
-    """提示 PATH 状态；实际写入由 install.ps1 负责。"""
-    if str(install_dir).lower() in os.environ.get("PATH", "").lower():
-        ok(f"PATH 已包含 {install_dir}")
-    else:
-        warn(f"{install_dir} 尚未在当前会话 PATH 中")
-        info("  install.ps1 已将其写入注册表，重新打开终端后生效")
-        info(f"  或立即执行: $env:PATH = '{install_dir};' + $env:PATH")
-
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 9: 最终验证
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1029,6 +1171,7 @@ def main():
 
         check_python()
         configure_ai(auto=args.auto)
+        configure_chip(auto=args.auto)
         install_arm_gcc(auto=args.auto)
         install_python_packages(auto=args.auto)
         create_workspace()
