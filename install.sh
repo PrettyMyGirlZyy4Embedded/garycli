@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# ─────────────────────────────────────────────────────────────────
-#  Gary Dev Agent  —  一键安装脚本
-#  用法：curl -fsSL https://www.garycli.com/install | bash
-# ─────────────────────────────────────────────────────────────────
+# Gary Dev Agent — 启动脚本（由安装程序自动生成）
+unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
+# 激活虚拟环境再运行
+source "$GARY_VENV/bin/activate"
+exec python "$GARY_DIR/stm32_agent.py" "\$@"
 set -e
 
 GARY_URL="https://www.garycli.com/gary.tar.gz"
