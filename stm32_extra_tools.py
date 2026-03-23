@@ -26,10 +26,10 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
 
-
 # ═══════════════════════════════════════════════════════════════
 # 工具 1: PID 自动调参
 # ═══════════════════════════════════════════════════════════════
+
 
 @dataclass
 class PIDParams:
@@ -37,15 +37,17 @@ class PIDParams:
     ki: float = 0.0
     kd: float = 0.0
 
+
 @dataclass
 class PIDResponse:
     """PID 响应曲线分析结果"""
-    overshoot_pct: float = 0.0       # 超调量 %
-    rise_time_ms: float = 0.0        # 上升时间 ms（10%→90%）
-    settling_time_ms: float = 0.0    # 调节时间 ms（进入±5%带）
+
+    overshoot_pct: float = 0.0  # 超调量 %
+    rise_time_ms: float = 0.0  # 上升时间 ms（10%→90%）
+    settling_time_ms: float = 0.0  # 调节时间 ms（进入±5%带）
     steady_state_error: float = 0.0  # 稳态误差
-    oscillation_count: int = 0       # 振荡次数
-    is_stable: bool = True           # 是否收敛
+    oscillation_count: int = 0  # 振荡次数
+    is_stable: bool = True  # 是否收敛
     peak_value: float = 0.0
     final_value: float = 0.0
     target_value: float = 0.0
@@ -63,20 +65,19 @@ def _parse_pid_serial(raw: str, value_key: str = "PID") -> List[dict]:
 
     # 格式1: key=value 对
     pattern1 = re.compile(
-        rf'{value_key}[:\s]+'
-        r't=(\d+)[,\s]+sp=([\d.+-]+)[,\s]+pv=([\d.+-]+)[,\s]+out=([\d.+-]+)'
-        r'(?:[,\s]+err=([\d.+-]+))?',
-        re.IGNORECASE
+        rf"{value_key}[:\s]+"
+        r"t=(\d+)[,\s]+sp=([\d.+-]+)[,\s]+pv=([\d.+-]+)[,\s]+out=([\d.+-]+)"
+        r"(?:[,\s]+err=([\d.+-]+))?",
+        re.IGNORECASE,
     )
     # 格式2: 纯空格分隔数字
     pattern2 = re.compile(
-        rf'{value_key}\s+([\d.+-]+)\s+([\d.+-]+)\s+([\d.+-]+)\s+([\d.+-]+)',
-        re.IGNORECASE
+        rf"{value_key}\s+([\d.+-]+)\s+([\d.+-]+)\s+([\d.+-]+)\s+([\d.+-]+)", re.IGNORECASE
     )
     # 格式3: [PID] time=N sp=N pv=N
     pattern3 = re.compile(
-        rf'\[?{value_key}\]?\s+time=([\d.+-]+)\s+sp=([\d.+-]+)\s+pv=([\d.+-]+)\s+out=([\d.+-]+)',
-        re.IGNORECASE
+        rf"\[?{value_key}\]?\s+time=([\d.+-]+)\s+sp=([\d.+-]+)\s+pv=([\d.+-]+)\s+out=([\d.+-]+)",
+        re.IGNORECASE,
     )
 
     for line in raw.splitlines():
@@ -86,29 +87,40 @@ def _parse_pid_serial(raw: str, value_key: str = "PID") -> List[dict]:
 
         m = pattern1.search(line)
         if m:
-            data.append({
-                "t": float(m.group(1)),
-                "sp": float(m.group(2)),
-                "pv": float(m.group(3)),
-                "out": float(m.group(4)),
-                "err": float(m.group(5)) if m.group(5) else float(m.group(2)) - float(m.group(3)),
-            })
+            data.append(
+                {
+                    "t": float(m.group(1)),
+                    "sp": float(m.group(2)),
+                    "pv": float(m.group(3)),
+                    "out": float(m.group(4)),
+                    "err": (
+                        float(m.group(5)) if m.group(5) else float(m.group(2)) - float(m.group(3))
+                    ),
+                }
+            )
             continue
 
         m = pattern3.search(line)
         if m:
-            data.append({
-                "t": float(m.group(1)),
-                "sp": float(m.group(2)),
-                "pv": float(m.group(3)),
-                "out": float(m.group(4)),
-                "err": float(m.group(2)) - float(m.group(3)),
-            })
+            data.append(
+                {
+                    "t": float(m.group(1)),
+                    "sp": float(m.group(2)),
+                    "pv": float(m.group(3)),
+                    "out": float(m.group(4)),
+                    "err": float(m.group(2)) - float(m.group(3)),
+                }
+            )
             continue
 
         m = pattern2.search(line)
         if m:
-            t, sp, pv, out = float(m.group(1)), float(m.group(2)), float(m.group(3)), float(m.group(4))
+            t, sp, pv, out = (
+                float(m.group(1)),
+                float(m.group(2)),
+                float(m.group(3)),
+                float(m.group(4)),
+            )
             data.append({"t": t, "sp": sp, "pv": pv, "out": out, "err": sp - pv})
             continue
 
@@ -125,7 +137,7 @@ def _analyze_response(data: List[dict], target: float = None) -> PIDResponse:
     t = [d["t"] for d in data]
 
     peak = max(pv)
-    final = statistics.mean(pv[-max(3, len(pv)//10):])  # 末尾均值作为稳态值
+    final = statistics.mean(pv[-max(3, len(pv) // 10) :])  # 末尾均值作为稳态值
 
     resp = PIDResponse()
     resp.target_value = sp
@@ -165,22 +177,23 @@ def _analyze_response(data: List[dict], target: float = None) -> PIDResponse:
     errors = [v - sp for v in pv]
     crossings = 0
     for i in range(1, len(errors)):
-        if errors[i] * errors[i-1] < 0:
+        if errors[i] * errors[i - 1] < 0:
             crossings += 1
     resp.oscillation_count = crossings
 
     # 稳定性判断
     resp.is_stable = (
-        resp.overshoot_pct < 60 and
-        resp.oscillation_count < 20 and
-        resp.steady_state_error < abs(sp) * 0.1
+        resp.overshoot_pct < 60
+        and resp.oscillation_count < 20
+        and resp.steady_state_error < abs(sp) * 0.1
     )
 
     return resp
 
 
-def _ziegler_nichols_from_response(resp: PIDResponse, current: PIDParams,
-                                    control_type: str = "pid") -> PIDParams:
+def _ziegler_nichols_from_response(
+    resp: PIDResponse, current: PIDParams, control_type: str = "pid"
+) -> PIDParams:
     """
     基于响应曲线分析，用改进的 Ziegler-Nichols 规则推荐下一组参数。
     策略：
@@ -237,8 +250,7 @@ def _ziegler_nichols_from_response(resp: PIDResponse, current: PIDParams,
     return PIDParams(kp=round(kp, 4), ki=round(ki, 6), kd=round(kd, 4))
 
 
-def stm32_pid_analyze(serial_output: str, target: float = None,
-                       value_key: str = "PID") -> dict:
+def stm32_pid_analyze(serial_output: str, target: float = None, value_key: str = "PID") -> dict:
     """
     分析串口采集的 PID 响应数据。
     输入串口原始文本，返回超调量、上升时间、调节时间、稳态误差、振荡次数等指标，
@@ -300,10 +312,15 @@ def stm32_pid_analyze(serial_output: str, target: float = None,
     }
 
 
-def stm32_pid_tune(current_kp: float, current_ki: float, current_kd: float,
-                    serial_output: str = "", target: float = None,
-                    control_type: str = "pid",
-                    value_key: str = "PID") -> dict:
+def stm32_pid_tune(
+    current_kp: float,
+    current_ki: float,
+    current_kd: float,
+    serial_output: str = "",
+    target: float = None,
+    control_type: str = "pid",
+    value_key: str = "PID",
+) -> dict:
     """
     AI 辅助 PID 自动调参：分析当前响应曲线，推荐下一组参数。
 
@@ -338,7 +355,7 @@ def stm32_pid_tune(current_kp: float, current_ki: float, current_kd: float,
                     "步骤4: 用振荡周期 Tu 计算: Kp=0.6*Ku, Ki=2*Kp/Tu, Kd=Kp*Tu/8"
                 ),
                 "current": asdict(current),
-                "serial_format": "请在代码中添加: Debug_Print(\"PID:t=%%d,sp=%%d,pv=%%d,out=%%d,err=%%d\\r\\n\", ...);",
+                "serial_format": '请在代码中添加: Debug_Print("PID:t=%%d,sp=%%d,pv=%%d,out=%%d,err=%%d\\r\\n", ...);',
             }
         return {
             "success": True,
@@ -430,7 +447,7 @@ def stm32_i2c_scan(i2c_instance: str = "I2C1") -> dict:
     inst = i2c_instance.upper().replace("I2C", "")
     handle = f"hi2c{inst}"
 
-    scan_code = f'''
+    scan_code = f"""
 /* ═══ I2C 总线扫描 ═══ */
 void I2C_Scan(void) {{
     Debug_Print("I2C{inst} Scan Start...\\r\\n");
@@ -455,7 +472,7 @@ void I2C_Scan(void) {{
     }}
     Debug_Print("I2C{inst} Scan Done\\r\\n");
 }}
-'''
+"""
     return {
         "success": True,
         "code_snippet": scan_code,
@@ -473,9 +490,15 @@ void I2C_Scan(void) {{
 # 工具 3: PWM 频率/占空比扫描
 # ═══════════════════════════════════════════════════════════════
 
-def stm32_pwm_sweep(timer: str = "TIM2", channel: int = 1,
-                     freq_start: int = 100, freq_end: int = 10000,
-                     steps: int = 10, clock_mhz: int = 72) -> dict:
+
+def stm32_pwm_sweep(
+    timer: str = "TIM2",
+    channel: int = 1,
+    freq_start: int = 100,
+    freq_end: int = 10000,
+    steps: int = 10,
+    clock_mhz: int = 72,
+) -> dict:
     """
     生成 PWM 频率扫描代码，自动计算每个频率对应的 PSC/ARR 值。
     用于测试电机/蜂鸣器/LED 在不同频率下的响应。
@@ -496,7 +519,7 @@ def stm32_pwm_sweep(timer: str = "TIM2", channel: int = 1,
     for f in freqs:
         # clock / (PSC+1) / (ARR+1) = freq
         # 选择 ARR 尽量大（分辨率高）
-        best_err = float('inf')
+        best_err = float("inf")
         best = (0, 0)
         for psc in range(0, 65536):
             arr = round(clock_mhz * 1e6 / (psc + 1) / f) - 1
@@ -509,13 +532,15 @@ def stm32_pwm_sweep(timer: str = "TIM2", channel: int = 1,
                 best = (psc, arr)
             if err < 1:
                 break
-        configs.append({
-            "freq": f,
-            "psc": best[0],
-            "arr": best[1],
-            "actual_freq": round(clock_mhz * 1e6 / (best[0]+1) / (best[1]+1), 1),
-            "duty_50_ccr": best[1] // 2,
-        })
+        configs.append(
+            {
+                "freq": f,
+                "psc": best[0],
+                "arr": best[1],
+                "actual_freq": round(clock_mhz * 1e6 / (best[0] + 1) / (best[1] + 1), 1),
+                "duty_50_ccr": best[1] // 2,
+            }
+        )
 
     # 生成 C 数组
     array_code = f"/* PWM 频率扫描表：{tim} CH{channel}, 时钟 {clock_mhz}MHz */\n"
@@ -555,6 +580,7 @@ void PWM_Sweep(uint16_t delay_ms) {{
 # 工具 4: Flash/RAM 使用分析
 # ═══════════════════════════════════════════════════════════════
 
+
 def stm32_memory_map(bin_path: str = None, chip: str = "STM32F103C8T6") -> dict:
     """
     分析固件 Flash/RAM 使用情况。
@@ -562,7 +588,7 @@ def stm32_memory_map(bin_path: str = None, chip: str = "STM32F103C8T6") -> dict:
     """
     # 芯片 Flash/RAM 数据库（常见型号）
     chip_db = {
-        "STM32F103C8": {"flash_kb": 64,  "ram_kb": 20},
+        "STM32F103C8": {"flash_kb": 64, "ram_kb": 20},
         "STM32F103CB": {"flash_kb": 128, "ram_kb": 20},
         "STM32F103RC": {"flash_kb": 256, "ram_kb": 48},
         "STM32F103RE": {"flash_kb": 512, "ram_kb": 64},
@@ -570,10 +596,10 @@ def stm32_memory_map(bin_path: str = None, chip: str = "STM32F103C8T6") -> dict:
         "STM32F103ZE": {"flash_kb": 512, "ram_kb": 64},
         "STM32F401CC": {"flash_kb": 256, "ram_kb": 64},
         "STM32F407VE": {"flash_kb": 512, "ram_kb": 128},
-        "STM32F407VG": {"flash_kb": 1024,"ram_kb": 128},
+        "STM32F407VG": {"flash_kb": 1024, "ram_kb": 128},
         "STM32F411CE": {"flash_kb": 512, "ram_kb": 128},
-        "STM32F030F4": {"flash_kb": 16,  "ram_kb": 4},
-        "STM32F030C8": {"flash_kb": 64,  "ram_kb": 8},
+        "STM32F030F4": {"flash_kb": 16, "ram_kb": 4},
+        "STM32F030C8": {"flash_kb": 64, "ram_kb": 8},
         "STM32F072CB": {"flash_kb": 128, "ram_kb": 16},
         "STM32F303CC": {"flash_kb": 256, "ram_kb": 40},
     }
@@ -581,7 +607,7 @@ def stm32_memory_map(bin_path: str = None, chip: str = "STM32F103C8T6") -> dict:
     # 匹配芯片
     chip_upper = chip.upper().strip()
     # 去掉封装+温度后缀（如 T6/U3）
-    chip_key = re.sub(r'[A-Z]\d$', '', chip_upper)
+    chip_key = re.sub(r"[A-Z]\d$", "", chip_upper)
     specs = chip_db.get(chip_key, None)
 
     if specs is None:
@@ -621,7 +647,8 @@ def stm32_memory_map(bin_path: str = None, chip: str = "STM32F103C8T6") -> dict:
         },
         "warning": (
             f"⚠ Flash 使用率 {bin_size/flash_total*100:.1f}% 超过 90%！"
-            if bin_size > flash_total * 0.9 else ""
+            if bin_size > flash_total * 0.9
+            else ""
         ),
     }
 
@@ -629,6 +656,7 @@ def stm32_memory_map(bin_path: str = None, chip: str = "STM32F103C8T6") -> dict:
 # ═══════════════════════════════════════════════════════════════
 # 工具 5: 引脚冲突检测
 # ═══════════════════════════════════════════════════════════════
+
 
 def stm32_pin_conflict(code: str) -> dict:
     """
@@ -643,15 +671,16 @@ def stm32_pin_conflict(code: str) -> dict:
 
     # 提取所有 GPIO_InitStruct 配置
     init_blocks = re.findall(
-        r'GPIO_InitStruct\.Pin\s*=\s*([^;]+);.*?'
-        r'GPIO_InitStruct\.Mode\s*=\s*([^;]+);.*?'
-        r'HAL_GPIO_Init\s*\(\s*(\w+)',
-        code, re.DOTALL
+        r"GPIO_InitStruct\.Pin\s*=\s*([^;]+);.*?"
+        r"GPIO_InitStruct\.Mode\s*=\s*([^;]+);.*?"
+        r"HAL_GPIO_Init\s*\(\s*(\w+)",
+        code,
+        re.DOTALL,
     )
 
     for pin_expr, mode, port in init_blocks:
         # 解析引脚（可能是 GPIO_PIN_0 | GPIO_PIN_1）
-        pins = re.findall(r'GPIO_PIN_(\d+)', pin_expr)
+        pins = re.findall(r"GPIO_PIN_(\d+)", pin_expr)
         port_letter = port.replace("GPIO", "").strip()
 
         for pin_num in pins:
@@ -665,11 +694,13 @@ def stm32_pin_conflict(code: str) -> dict:
     # 检测冲突
     for pin, modes in pin_usage.items():
         if len(modes) > 1:
-            conflicts.append({
-                "pin": pin,
-                "modes": modes,
-                "message": f"{pin} 被配置了 {len(modes)} 次: {', '.join(modes)}",
-            })
+            conflicts.append(
+                {
+                    "pin": pin,
+                    "modes": modes,
+                    "message": f"{pin} 被配置了 {len(modes)} 次: {', '.join(modes)}",
+                }
+            )
 
     # SWD 引脚检查
     swd_pins = {"PA13": "SWDIO", "PA14": "SWCLK"}
@@ -677,11 +708,13 @@ def stm32_pin_conflict(code: str) -> dict:
 
     for pin, func in swd_pins.items():
         if pin in pin_usage:
-            conflicts.append({
-                "pin": pin,
-                "message": f"⚠ {pin} ({func}) 是 SWD 调试引脚！占用后将无法烧录调试！",
-                "severity": "critical",
-            })
+            conflicts.append(
+                {
+                    "pin": pin,
+                    "message": f"⚠ {pin} ({func}) 是 SWD 调试引脚！占用后将无法烧录调试！",
+                    "severity": "critical",
+                }
+            )
 
     for pin, func in jtag_pins.items():
         if pin in pin_usage:
@@ -693,7 +726,7 @@ def stm32_pin_conflict(code: str) -> dict:
                 )
 
     # I2C 引脚模式检查（F1 必须用 AF_OD）
-    i2c_pins = re.findall(r'MX_I2C\d+_Init', code)
+    i2c_pins = re.findall(r"MX_I2C\d+_Init", code)
     if i2c_pins:
         if "GPIO_MODE_AF_OD" not in code and "GPIO_MODE_AF_PP" not in code:
             warnings.append("I2C 引脚未见 AF_OD/AF_PP 模式配置，可能导致通信失败")
@@ -715,6 +748,7 @@ def stm32_pin_conflict(code: str) -> dict:
 # 工具 6: 外设快速冒烟测试
 # ═══════════════════════════════════════════════════════════════
 
+
 def stm32_peripheral_test(peripherals: List[str]) -> dict:
     """
     生成外设快速测试代码片段。
@@ -727,7 +761,7 @@ def stm32_peripheral_test(peripherals: List[str]) -> dict:
         p = p.lower().strip()
 
         if p == "gpio":
-            snippets["gpio"] = '''
+            snippets["gpio"] = """
 /* GPIO 测试：PA0 翻转 LED */
 __HAL_RCC_GPIOA_CLK_ENABLE();
 GPIO_InitTypeDef g = {0};
@@ -739,9 +773,9 @@ for (int i = 0; i < 10; i++) {
     HAL_Delay(200);
 }
 Debug_Print("GPIO:OK\\r\\n");
-'''
+"""
         elif p == "adc":
-            snippets["adc"] = '''
+            snippets["adc"] = """
 /* ADC 测试：读取 PA0 模拟电压 */
 __HAL_RCC_ADC1_CLK_ENABLE();
 __HAL_RCC_GPIOA_CLK_ENABLE();
@@ -763,9 +797,9 @@ HAL_ADC_Start(&hadc1);
 HAL_ADC_PollForConversion(&hadc1, 100);
 uint32_t val = HAL_ADC_GetValue(&hadc1);
 Debug_PrintInt("ADC=", val);  /* 0-4095，3.3V 满量程 */
-'''
+"""
         elif p == "i2c":
-            snippets["i2c"] = '''
+            snippets["i2c"] = """
 /* I2C 测试：扫描 0x08-0x77 */
 /* 需要先初始化 I2C 外设 */
 for (uint8_t a = 0x08; a < 0x78; a++) {
@@ -774,16 +808,16 @@ for (uint8_t a = 0x08; a < 0x78; a++) {
     }
 }
 Debug_Print("I2C:DONE\\r\\n");
-'''
+"""
         elif p == "uart":
-            snippets["uart"] = '''
+            snippets["uart"] = """
 /* UART 回环测试：发送后读回 */
 uint8_t test[] = "UART_TEST_OK\\r\\n";
 HAL_UART_Transmit(&huart1, test, sizeof(test)-1, 100);
 Debug_Print("UART:OK\\r\\n");
-'''
+"""
         elif p == "pwm":
-            snippets["pwm"] = '''
+            snippets["pwm"] = """
 /* PWM 测试：TIM2 CH1 输出 1kHz 50% 占空比 */
 /* 需要先初始化 TIM2 */
 HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
@@ -792,9 +826,9 @@ htim2.Instance->PSC = 71;
 htim2.Instance->CCR1 = 500;  /* 50% */
 htim2.Instance->EGR = TIM_EGR_UG;
 Debug_Print("PWM:1kHz_50%\\r\\n");
-'''
+"""
         elif p in ("timer", "tim"):
-            snippets["timer"] = '''
+            snippets["timer"] = """
 /* 定时器测试：TIM2 1秒中断 */
 /* 需要先初始化 TIM2 并使能中断 */
 HAL_TIM_Base_Start_IT(&htim2);
@@ -803,14 +837,14 @@ Debug_Print("TIM:Started\\r\\n");
 /* void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
  *     if (htim->Instance == TIM2) Debug_Print("TIM2:Tick\\r\\n");
  * } */
-'''
+"""
         elif p == "spi":
-            snippets["spi"] = '''
+            snippets["spi"] = """
 /* SPI 测试：发送并读取一个字节 */
 uint8_t tx = 0xAA, rx = 0;
 HAL_SPI_TransmitReceive(&hspi1, &tx, &rx, 1, 100);
 Debug_PrintInt("SPI_RX=0x", rx);
-'''
+"""
         else:
             snippets[p] = f"/* 不支持的外设: {p} */"
 
@@ -826,11 +860,15 @@ Debug_PrintInt("SPI_RX=0x", rx);
 # 工具 7: 舵机角度校准
 # ═══════════════════════════════════════════════════════════════
 
-def stm32_servo_calibrate(timer: str = "TIM2", channel: int = 1,
-                           clock_mhz: int = 72,
-                           min_pulse_us: int = 500,
-                           max_pulse_us: int = 2500,
-                           angle_range: int = 180) -> dict:
+
+def stm32_servo_calibrate(
+    timer: str = "TIM2",
+    channel: int = 1,
+    clock_mhz: int = 72,
+    min_pulse_us: int = 500,
+    max_pulse_us: int = 2500,
+    angle_range: int = 180,
+) -> dict:
     """
     生成舵机校准代码：自动扫描角度范围，通过串口输出当前角度和脉宽。
     适用于 SG90/MG995/MG996R 等常见舵机。
@@ -905,8 +943,10 @@ HAL_TIM_PWM_Start(&htim, TIM_CHANNEL_{channel});
         "code": calibrate_code,
         "init_hint": init_hint,
         "params": {
-            "psc": psc, "arr": arr,
-            "ccr_min": ccr_min, "ccr_max": ccr_max,
+            "psc": psc,
+            "arr": arr,
+            "ccr_min": ccr_min,
+            "ccr_max": ccr_max,
             "period_us": period_us,
         },
         "usage": "main() 中调用 Servo_Calibrate(); 观察舵机运动和串口输出",
@@ -921,28 +961,41 @@ HAL_TIM_PWM_Start(&htim, TIM_CHANNEL_{channel});
 # 工具 8: 功耗估算
 # ═══════════════════════════════════════════════════════════════
 
-def stm32_power_estimate(code: str, chip: str = "STM32F103C8T6",
-                          vdd: float = 3.3) -> dict:
+
+def stm32_power_estimate(code: str, chip: str = "STM32F103C8T6", vdd: float = 3.3) -> dict:
     """
     基于代码中使能的外设，粗略估算 MCU 功耗。
     注意：这是理论估算，实际功耗受时钟频率、运行模式、外部负载影响很大。
     """
     # 各外设典型电流（mA @ 72MHz, 3.3V, 仅供参考）
     peripheral_current = {
-        "GPIOA": 0.1, "GPIOB": 0.1, "GPIOC": 0.1, "GPIOD": 0.1, "GPIOE": 0.1,
-        "USART1": 0.5, "USART2": 0.5, "USART3": 0.5,
-        "I2C1": 0.3, "I2C2": 0.3,
-        "SPI1": 0.5, "SPI2": 0.5,
-        "TIM1": 0.3, "TIM2": 0.2, "TIM3": 0.2, "TIM4": 0.2,
-        "ADC1": 1.0, "ADC2": 1.0,
-        "DMA1": 0.3, "DMA2": 0.3,
+        "GPIOA": 0.1,
+        "GPIOB": 0.1,
+        "GPIOC": 0.1,
+        "GPIOD": 0.1,
+        "GPIOE": 0.1,
+        "USART1": 0.5,
+        "USART2": 0.5,
+        "USART3": 0.5,
+        "I2C1": 0.3,
+        "I2C2": 0.3,
+        "SPI1": 0.5,
+        "SPI2": 0.5,
+        "TIM1": 0.3,
+        "TIM2": 0.2,
+        "TIM3": 0.2,
+        "TIM4": 0.2,
+        "ADC1": 1.0,
+        "ADC2": 1.0,
+        "DMA1": 0.3,
+        "DMA2": 0.3,
         "AFIO": 0.05,
     }
 
     # 检测代码中使能的外设
     enabled = []
     for periph in peripheral_current:
-        pattern = rf'__HAL_RCC_{periph}_CLK_ENABLE|RCC.*{periph}.*EN'
+        pattern = rf"__HAL_RCC_{periph}_CLK_ENABLE|RCC.*{periph}.*EN"
         if re.search(pattern, code, re.IGNORECASE):
             enabled.append(periph)
 
@@ -974,8 +1027,10 @@ def stm32_power_estimate(code: str, chip: str = "STM32F103C8T6",
 # 工具 9: 信号采集与分析
 # ═══════════════════════════════════════════════════════════════
 
-def stm32_signal_capture(serial_output: str, value_key: str = "ADC",
-                          sample_rate_hz: float = None) -> dict:
+
+def stm32_signal_capture(
+    serial_output: str, value_key: str = "ADC", sample_rate_hz: float = None
+) -> dict:
     """
     通用信号采集分析：解析串口数据，计算统计量和频域特征。
     支持 ADC 值、编码器计数、传感器读数等任何数值序列。
@@ -983,7 +1038,7 @@ def stm32_signal_capture(serial_output: str, value_key: str = "ADC",
     串口格式：ADC:1234 或 ADC=1234 或 ADC 1234
     """
     # 解析数值
-    pattern = re.compile(rf'{value_key}[:\s=]+([\d.+-]+)', re.IGNORECASE)
+    pattern = re.compile(rf"{value_key}[:\s=]+([\d.+-]+)", re.IGNORECASE)
     values = [float(m.group(1)) for m in pattern.finditer(serial_output)]
 
     if not values:
@@ -1015,7 +1070,7 @@ def stm32_signal_capture(serial_output: str, value_key: str = "ADC",
     if n > 10 and sample_rate_hz:
         crossings = 0
         for i in range(1, n):
-            if (values[i] - mean) * (values[i-1] - mean) < 0:
+            if (values[i] - mean) * (values[i - 1] - mean) < 0:
                 crossings += 1
         est_freq = crossings / 2 * sample_rate_hz / n
         result["estimated_freq_hz"] = round(est_freq, 2)
@@ -1037,16 +1092,16 @@ def stm32_signal_capture(serial_output: str, value_key: str = "ADC",
 # ═══════════════════════════════════════════════════════════════
 
 EXTRA_TOOLS_MAP = {
-    "stm32_pid_tune":        stm32_pid_tune,
-    "stm32_pid_analyze":     stm32_pid_analyze,
-    "stm32_i2c_scan":        stm32_i2c_scan,
-    "stm32_pwm_sweep":       stm32_pwm_sweep,
-    "stm32_memory_map":      stm32_memory_map,
-    "stm32_pin_conflict":    stm32_pin_conflict,
+    "stm32_pid_tune": stm32_pid_tune,
+    "stm32_pid_analyze": stm32_pid_analyze,
+    "stm32_i2c_scan": stm32_i2c_scan,
+    "stm32_pwm_sweep": stm32_pwm_sweep,
+    "stm32_memory_map": stm32_memory_map,
+    "stm32_pin_conflict": stm32_pin_conflict,
     "stm32_peripheral_test": stm32_peripheral_test,
     "stm32_servo_calibrate": stm32_servo_calibrate,
-    "stm32_power_estimate":  stm32_power_estimate,
-    "stm32_signal_capture":  stm32_signal_capture,
+    "stm32_power_estimate": stm32_power_estimate,
+    "stm32_signal_capture": stm32_signal_capture,
 }
 
 EXTRA_TOOL_SCHEMAS = [
@@ -1065,10 +1120,14 @@ EXTRA_TOOL_SCHEMAS = [
                     "current_kp": {"type": "number", "description": "当前 Kp 值"},
                     "current_ki": {"type": "number", "description": "当前 Ki 值"},
                     "current_kd": {"type": "number", "description": "当前 Kd 值"},
-                    "serial_output": {"type": "string", "description": "串口原始输出（含 PID 调试数据）"},
+                    "serial_output": {
+                        "type": "string",
+                        "description": "串口原始输出（含 PID 调试数据）",
+                    },
                     "target": {"type": "number", "description": "目标设定值（不填从数据提取）"},
                     "control_type": {
-                        "type": "string", "enum": ["pid", "pd", "p"],
+                        "type": "string",
+                        "enum": ["pid", "pd", "p"],
                         "description": "控制类型（默认 pid）",
                     },
                     "value_key": {"type": "string", "description": "串口数据前缀（默认 PID）"},
@@ -1101,7 +1160,10 @@ EXTRA_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "i2c_instance": {"type": "string", "description": "I2C 实例，如 I2C1/I2C2（默认 I2C1）"},
+                    "i2c_instance": {
+                        "type": "string",
+                        "description": "I2C 实例，如 I2C1/I2C2（默认 I2C1）",
+                    },
                 },
                 "required": [],
             },
@@ -1166,7 +1228,7 @@ EXTRA_TOOL_SCHEMAS = [
                     "peripherals": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "外设列表，如 [\"gpio\", \"i2c\", \"adc\"]",
+                        "description": '外设列表，如 ["gpio", "i2c", "adc"]',
                     },
                 },
                 "required": ["peripherals"],
@@ -1185,7 +1247,10 @@ EXTRA_TOOL_SCHEMAS = [
                     "channel": {"type": "integer"},
                     "clock_mhz": {"type": "integer"},
                     "min_pulse_us": {"type": "integer", "description": "0° 脉宽 us（默认 500）"},
-                    "max_pulse_us": {"type": "integer", "description": "最大角度脉宽 us（默认 2500）"},
+                    "max_pulse_us": {
+                        "type": "integer",
+                        "description": "最大角度脉宽 us（默认 2500）",
+                    },
                     "angle_range": {"type": "integer", "description": "角度范围（90/180/270）"},
                 },
                 "required": [],
@@ -1218,7 +1283,10 @@ EXTRA_TOOL_SCHEMAS = [
                 "properties": {
                     "serial_output": {"type": "string", "description": "串口原始文本"},
                     "value_key": {"type": "string", "description": "数据前缀（如 ADC、ENC、TEMP）"},
-                    "sample_rate_hz": {"type": "number", "description": "采样率 Hz（用于频率估计）"},
+                    "sample_rate_hz": {
+                        "type": "number",
+                        "description": "采样率 Hz（用于频率估计）",
+                    },
                 },
                 "required": ["serial_output"],
             },

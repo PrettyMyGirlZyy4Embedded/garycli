@@ -6,7 +6,6 @@ import json
 import pytest
 from unittest.mock import patch, MagicMock
 
-
 VALID_SKILL_JSON = {
     "name": "test_skill",
     "version": "1.0.0",
@@ -24,9 +23,7 @@ VALID_SCHEMA = [
             "description": "A test tool",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "param": {"type": "string", "description": "A test param"}
-                },
+                "properties": {"param": {"type": "string", "description": "A test param"}},
                 "required": ["param"],
             },
         },
@@ -97,6 +94,7 @@ class TestToolsMap:
 
     def test_tools_map_values_are_callable(self):
         """All values in TOOLS_MAP must be callable."""
+
         def test_tool(param: str) -> dict:
             return {"success": True}
 
@@ -106,6 +104,7 @@ class TestToolsMap:
 
     def test_tool_returns_dict(self):
         """Tool functions must return a dict."""
+
         def test_tool(param: str) -> dict:
             return {"success": True, "result": param}
 
@@ -117,12 +116,15 @@ class TestToolsMap:
 class TestSkillInstallSources:
     """Test that install source types are recognized."""
 
-    @pytest.mark.parametrize("source,expected_type", [
-        ("./my_skill/", "local_dir"),
-        ("~/Downloads/skill.zip", "zip"),
-        ("https://github.com/user/gary-skill-x.git", "git"),
-        ("my_tool.py", "single_file"),
-    ])
+    @pytest.mark.parametrize(
+        "source,expected_type",
+        [
+            ("./my_skill/", "local_dir"),
+            ("~/Downloads/skill.zip", "zip"),
+            ("https://github.com/user/gary-skill-x.git", "git"),
+            ("my_tool.py", "single_file"),
+        ],
+    )
     def test_install_source_type_detection(self, source, expected_type):
         """Different source formats should be distinguishable."""
         if source.endswith(".git"):

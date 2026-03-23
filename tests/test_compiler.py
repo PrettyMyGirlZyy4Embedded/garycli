@@ -6,7 +6,6 @@ import subprocess
 import pytest
 from unittest.mock import patch, MagicMock
 
-
 SUPPORTED_CHIPS = [
     # STM32F0
     "STM32F030F4",

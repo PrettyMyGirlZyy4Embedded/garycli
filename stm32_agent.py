@@ -30,10 +30,13 @@ from typing import List, Dict, Optional, Any
 import requests
 from stm32_extra_tools import EXTRA_TOOLS_MAP, EXTRA_TOOL_SCHEMAS
 from gary_skills import (
-    init_skills, handle_skill_command,
-    SKILL_TOOLS_MAP, SKILL_TOOL_SCHEMAS,
+    init_skills,
+    handle_skill_command,
+    SKILL_TOOLS_MAP,
+    SKILL_TOOL_SCHEMAS,
     _get_manager,
 )
+
 # ─────────────────────────────────────────────────────────────
 # 将本文件所在目录加入路径，使能 import compiler / config
 # ─────────────────────────────────────────────────────────────
@@ -61,6 +64,7 @@ from openai import OpenAI
 # Flash 项目内部模块
 import config as _cfg
 import compiler as _compiler_module
+
 Compiler = _compiler_module.Compiler
 
 AI_API_KEY = getattr(_cfg, "AI_API_KEY", "")
@@ -84,14 +88,18 @@ REGISTER_READ_DELAY = getattr(_cfg, "REGISTER_READ_DELAY", 0.3)
 # ─────────────────────────────────────────────────────────────
 _AI_PRESETS = [
     # (显示名,                base_url,                                                    默认 model)
-    ("OpenAI",               "https://api.openai.com/v1",                                 "gpt-4o"),
-    ("DeepSeek",             "https://api.deepseek.com/v1",                               "deepseek-chat"),
-    ("Kimi / Moonshot",      "https://api.moonshot.cn/v1",                                "kimi-k2.5"),
-    ("Google Gemini",        "https://generativelanguage.googleapis.com/v1beta/openai/",  "gemini-2.0-flash"),
-    ("通义千问 (阿里云)",     "https://dashscope.aliyuncs.com/compatible-mode/v1",          "qwen-plus"),
-    ("智谱 GLM",             "https://open.bigmodel.cn/api/paas/v4/",                     "glm-4-flash"),
-    ("Ollama (本地)",         "http://127.0.0.1:11434/v1",                                 "qwen2.5-coder:14b"),
-    ("自定义 / Other",        "",                                                           ""),
+    ("OpenAI", "https://api.openai.com/v1", "gpt-4o"),
+    ("DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat"),
+    ("Kimi / Moonshot", "https://api.moonshot.cn/v1", "kimi-k2.5"),
+    (
+        "Google Gemini",
+        "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "gemini-2.0-flash",
+    ),
+    ("通义千问 (阿里云)", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus"),
+    ("智谱 GLM", "https://open.bigmodel.cn/api/paas/v4/", "glm-4-flash"),
+    ("Ollama (本地)", "http://127.0.0.1:11434/v1", "qwen2.5-coder:14b"),
+    ("自定义 / Other", "", ""),
 ]
 
 _CONFIG_KEYS_TO_RELOAD = (
@@ -144,20 +152,24 @@ def _upsert_config_assignment(text: str, key: str, value: Any) -> str:
         text += "\n"
     return text + line + "\n"
 
+
 def _read_ai_config() -> tuple:
     """从 config.py 读取 (api_key, base_url, model)"""
     p = _HERE / "config.py"
     if not p.exists():
         return AI_API_KEY, AI_BASE_URL, AI_MODEL
     text = p.read_text(encoding="utf-8")
+
     def _get(pat):
         m = re.search(pat, text, re.MULTILINE)
         return m.group(1).strip() if m else ""
+
     return (
         _get(r'^AI_API_KEY\s*=\s*["\']([^"\']*)["\']') or AI_API_KEY,
         _get(r'^AI_BASE_URL\s*=\s*["\']([^"\']*)["\']') or AI_BASE_URL,
         _get(r'^AI_MODEL\s*=\s*["\']([^"\']*)["\']') or AI_MODEL,
     )
+
 
 def _write_config_assignments(updates: Dict[str, Any]) -> bool:
     """原地修改 config.py 中的若干配置项"""
@@ -173,21 +185,27 @@ def _write_config_assignments(updates: Dict[str, Any]) -> bool:
 
 def _write_ai_config(api_key: str, base_url: str, model: str) -> bool:
     """原地修改 config.py 的三行 AI 配置"""
-    return _write_config_assignments({
-        "AI_API_KEY": api_key,
-        "AI_BASE_URL": base_url,
-        "AI_MODEL": model,
-    })
+    return _write_config_assignments(
+        {
+            "AI_API_KEY": api_key,
+            "AI_BASE_URL": base_url,
+            "AI_MODEL": model,
+        }
+    )
 
 
 def _write_cli_language_config(language: str) -> bool:
-    return _write_config_assignments({
-        "CLI_LANGUAGE": _normalize_cli_language(language),
-    })
+    return _write_config_assignments(
+        {
+            "CLI_LANGUAGE": _normalize_cli_language(language),
+        }
+    )
+
 
 def _reload_ai_globals():
     """写入 config.py 后重新加载 AI 相关全局变量"""
     import importlib, config as _cfg
+
     importlib.reload(_cfg)
     defaults = {
         "AI_API_KEY": "",
@@ -206,6 +224,7 @@ def _reload_ai_globals():
         globals()[name] = getattr(_cfg, name, defaults[name])
     globals()["CLI_LANGUAGE"] = _normalize_cli_language(globals().get("CLI_LANGUAGE", "zh"))
 
+
 def _mask_key(key: str) -> str:
     if not key:
         return "(未设置)"
@@ -222,12 +241,7 @@ def _api_key_is_placeholder(api_key: str) -> bool:
 
 def _ai_is_configured() -> bool:
     api_key, base_url, model = _read_ai_config()
-    return bool(
-        api_key
-        and base_url
-        and model
-        and not _api_key_is_placeholder(api_key)
-    )
+    return bool(api_key and base_url and model and not _api_key_is_placeholder(api_key))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -311,7 +325,9 @@ def _split_member_content(text: str) -> tuple[str, list[str]]:
         source = _default_member_content().strip() + "\n\n" + source
     before, _, after = source.partition("## Memories")
     header = before.rstrip() + "\n\n## Memories\n"
-    entries = [chunk.strip() for chunk in re.split(r"(?m)(?=^### )", after.strip()) if chunk.strip()]
+    entries = [
+        chunk.strip() for chunk in re.split(r"(?m)(?=^### )", after.strip()) if chunk.strip()
+    ]
     return header, entries
 
 
@@ -366,7 +382,11 @@ def _append_member_memory(
 
     fingerprint = _normalize_member_text(clean_title + " " + " ".join(lines), limit=500).lower()
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    entry_lines = [f"### [{timestamp}] {clean_title}", f"- importance: {importance}", f"- source: {source}"]
+    entry_lines = [
+        f"### [{timestamp}] {clean_title}",
+        f"- importance: {importance}",
+        f"- source: {source}",
+    ]
     if tags:
         entry_lines.append(f"- tags: {', '.join(tags)}")
     entry_lines.extend(f"- {line}" for line in lines)
@@ -412,7 +432,10 @@ def gary_save_member_memory(
 def _infer_code_tags(code: str) -> list[str]:
     text = code or ""
     checks = [
-        ("rtos", any(token in text for token in ("FreeRTOS.h", "xTaskCreate", "vTaskDelay(", "task.h"))),
+        (
+            "rtos",
+            any(token in text for token in ("FreeRTOS.h", "xTaskCreate", "vTaskDelay(", "task.h")),
+        ),
         ("uart", "HAL_UART_" in text or "USART" in text),
         ("debug_print", "Debug_Print(" in text or "Debug_PrintInt(" in text),
         ("boot_marker", "Gary:BOOT" in text),
@@ -480,7 +503,9 @@ def _record_success_memory(
         if event_type == "runtime_success":
             lines.append("烧录、启动、串口/寄存器验证通过，无 HardFault、无硬件缺失。")
             uart_step = next((step for step in (steps or []) if step.get("step") == "uart"), None)
-            reg_step = next((step for step in (steps or []) if step.get("step") == "registers"), None)
+            reg_step = next(
+                (step for step in (steps or []) if step.get("step") == "registers"), None
+            )
             if uart_step and uart_step.get("boot_ok"):
                 lines.append("串口已看到 Gary:BOOT，启动链路正常。")
             if reg_step and reg_step.get("key_regs"):
@@ -520,7 +545,9 @@ def _member_prompt_section() -> str:
     recent = []
     for entry in reversed(dynamic):
         needed = len(entry) + 2
-        if recent and (total + needed > MEMBER_PROMPT_CHAR_LIMIT or len(recent) >= MEMBER_PROMPT_MAX_DYNAMIC):
+        if recent and (
+            total + needed > MEMBER_PROMPT_CHAR_LIMIT or len(recent) >= MEMBER_PROMPT_MAX_DYNAMIC
+        ):
             break
         recent.append(entry)
         total += needed
@@ -755,7 +782,9 @@ def _telegram_daemon_status() -> dict:
     }
 
 
-def _telegram_api_call(token: str, method: str, payload: Optional[dict] = None, timeout: float = 30.0):
+def _telegram_api_call(
+    token: str, method: str, payload: Optional[dict] = None, timeout: float = 30.0
+):
     url = f"https://api.telegram.org/bot{token}/{method}"
     try:
         response = requests.post(url, json=payload or {}, timeout=timeout)
@@ -810,7 +839,9 @@ def _telegram_split_text(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> list
     return chunks
 
 
-def _telegram_send_text(token: str, chat_id: int, text: str, reply_to_message_id: Optional[int] = None):
+def _telegram_send_text(
+    token: str, chat_id: int, text: str, reply_to_message_id: Optional[int] = None
+):
     for index, chunk in enumerate(_telegram_split_text(text)):
         payload = {
             "chat_id": chat_id,
@@ -999,7 +1030,9 @@ class _TelegramPhaseReporter:
                 reply_to_message_id=self.reply_to_message_id,
             )
             self._note_progress(self._current_stage)
-            _telegram_log(f"telegram tool_error chat={self.chat_id} name={(name or '').strip() or 'unknown'} detail={detail[:80]}")
+            _telegram_log(
+                f"telegram tool_error chat={self.chat_id} name={(name or '').strip() or 'unknown'} detail={detail[:80]}"
+            )
         except Exception:
             pass
 
@@ -1012,7 +1045,7 @@ class _TelegramPhaseReporter:
             return ""
         prefix = preface + "\n\n"
         if cleaned_reply.startswith(prefix):
-            return cleaned_reply[len(prefix):].lstrip()
+            return cleaned_reply[len(prefix) :].lstrip()
         return cleaned_reply
 
     def _note_progress(self, stage: str):
@@ -1099,18 +1132,20 @@ def _telegram_status_lines(include_commands: bool = True) -> list[str]:
         f"last_update_id: {config.get('last_update_id', 0)}",
     ]
     if include_commands:
-        lines.extend([
-            "",
-            "常用命令:",
-            "gary telegram start        启动后台机器人",
-            "gary telegram stop         停止后台机器人",
-            "gary telegram allow <id>   添加 chat_id 白名单",
-            "gary telegram allow user:<id>   添加 user_id 白名单",
-            "gary telegram remove <id>  删除白名单",
-            "gary telegram allow-all    允许所有 chat",
-            "gary telegram whitelist    切回白名单模式",
-            "gary telegram reset        删除 Telegram 配置并停止机器人",
-        ])
+        lines.extend(
+            [
+                "",
+                "常用命令:",
+                "gary telegram start        启动后台机器人",
+                "gary telegram stop         停止后台机器人",
+                "gary telegram allow <id>   添加 chat_id 白名单",
+                "gary telegram allow user:<id>   添加 user_id 白名单",
+                "gary telegram remove <id>  删除白名单",
+                "gary telegram allow-all    允许所有 chat",
+                "gary telegram whitelist    切回白名单模式",
+                "gary telegram reset        删除 Telegram 配置并停止机器人",
+            ]
+        )
     return lines
 
 
@@ -1120,33 +1155,37 @@ def _print_telegram_status(include_commands: bool = True):
 
 
 def _telegram_help_text() -> str:
-    return "\n".join([
-        "Telegram 侧可用命令：",
-        "/start  查看状态和授权信息",
-        "/help   查看帮助",
-        "/clear  清空当前聊天上下文",
-        "/status 查看 Gary 当前硬件状态",
-        "/connect [芯片] 连接探针和串口",
-        "/disconnect 断开硬件",
-        "/chip [型号] 查看或切换芯片",
-        "/projects 查看最近历史项目",
-        "",
-        "其他普通文本会直接发给 Gary，保持当前聊天上下文连续对话。",
-    ])
+    return "\n".join(
+        [
+            "Telegram 侧可用命令：",
+            "/start  查看状态和授权信息",
+            "/help   查看帮助",
+            "/clear  清空当前聊天上下文",
+            "/status 查看 Gary 当前硬件状态",
+            "/connect [芯片] 连接探针和串口",
+            "/disconnect 断开硬件",
+            "/chip [型号] 查看或切换芯片",
+            "/projects 查看最近历史项目",
+            "",
+            "其他普通文本会直接发给 Gary，保持当前聊天上下文连续对话。",
+        ]
+    )
 
 
 def _format_hw_status_for_text(status: dict) -> str:
-    return "\n".join([
-        "Gary 当前状态",
-        f"chip: {status.get('chip', '-')}",
-        f"hw_connected: {status.get('hw_connected', False)}",
-        f"serial_connected: {status.get('serial_connected', False)}",
-        f"gcc_ok: {status.get('gcc_ok', False)}",
-        f"gcc_version: {status.get('gcc_version', '-')}",
-        f"hal_ok: {status.get('hal_ok', False)}",
-        f"hal_lib_ok: {status.get('hal_lib_ok', False)}",
-        f"workspace: {status.get('workspace', '-')}",
-    ])
+    return "\n".join(
+        [
+            "Gary 当前状态",
+            f"chip: {status.get('chip', '-')}",
+            f"hw_connected: {status.get('hw_connected', False)}",
+            f"serial_connected: {status.get('serial_connected', False)}",
+            f"gcc_ok: {status.get('gcc_ok', False)}",
+            f"gcc_version: {status.get('gcc_version', '-')}",
+            f"hal_ok: {status.get('hal_ok', False)}",
+            f"hal_lib_ok: {status.get('hal_lib_ok', False)}",
+            f"workspace: {status.get('workspace', '-')}",
+        ]
+    )
 
 
 def _format_projects_for_text(projects: list[dict]) -> str:
@@ -1185,7 +1224,9 @@ def configure_telegram_cli() -> dict:
     if _telegram_is_configured(config):
         CONSOLE.print(f"  [dim]当前 Token:[/] {_mask_telegram_token(config.get('bot_token', ''))}")
         CONSOLE.print(f"  [dim]当前 Bot  :[/] @{config.get('bot_username') or '-'}")
-        CONSOLE.print(f"  [dim]授权模式 :[/] {'允许所有 chat' if config.get('allow_all_chats') else '白名单'}")
+        CONSOLE.print(
+            f"  [dim]授权模式 :[/] {'允许所有 chat' if config.get('allow_all_chats') else '白名单'}"
+        )
         CONSOLE.print(f"  [dim]chat_id   :[/] {config.get('allowed_chat_ids') or '[]'}")
         CONSOLE.print(f"  [dim]user_id   :[/] {config.get('allowed_user_ids') or '[]'}")
         CONSOLE.print()
@@ -1230,7 +1271,7 @@ def configure_telegram_cli() -> dict:
     except (EOFError, KeyboardInterrupt):
         choice = default_choice
 
-    config["allow_all_chats"] = (choice == "2")
+    config["allow_all_chats"] = choice == "2"
 
     if not config["allow_all_chats"]:
         try:
@@ -1262,7 +1303,9 @@ def configure_telegram_cli() -> dict:
     if not saved.get("allow_all_chats"):
         CONSOLE.print(f"  [green]✓[/] chat_id   {saved.get('allowed_chat_ids') or '[]'}")
         CONSOLE.print(f"  [green]✓[/] user_id   {saved.get('allowed_user_ids') or '[]'}")
-        CONSOLE.print("  [dim]若还不知道 chat_id，可先在 Telegram 给机器人发 /start，再按提示执行 allow 命令[/]")
+        CONSOLE.print(
+            "  [dim]若还不知道 chat_id，可先在 Telegram 给机器人发 /start，再按提示执行 allow 命令[/]"
+        )
     CONSOLE.print()
     return {"success": True, "config": saved}
 
@@ -1285,13 +1328,18 @@ def _start_telegram_daemon() -> dict:
 
     config = _read_telegram_config()
     if not _telegram_is_configured(config):
-        return {"success": False, "message": "Telegram 机器人尚未配置，请先运行 gary telegram 或 /telegram"}
+        return {
+            "success": False,
+            "message": "Telegram 机器人尚未配置，请先运行 gary telegram 或 /telegram",
+        }
     if not _ai_is_configured():
         return {"success": False, "message": "AI 接口未配置，先运行 gary config 或 /config"}
 
     _ensure_gary_home()
     log_handle = TELEGRAM_LOG_PATH.open("a", encoding="utf-8")
-    log_handle.write(f"\n[{datetime.now().isoformat(timespec='seconds')}] starting telegram daemon\n")
+    log_handle.write(
+        f"\n[{datetime.now().isoformat(timespec='seconds')}] starting telegram daemon\n"
+    )
     log_handle.flush()
     try:
         process = subprocess.Popen(
@@ -1308,7 +1356,11 @@ def _start_telegram_daemon() -> dict:
 
     time.sleep(1.2)
     if _pid_is_alive(process.pid):
-        return {"success": True, "message": f"Telegram 机器人已启动（PID {process.pid}）", "pid": process.pid}
+        return {
+            "success": True,
+            "message": f"Telegram 机器人已启动（PID {process.pid}）",
+            "pid": process.pid,
+        }
     return {"success": False, "message": f"后台启动失败，请查看日志: {TELEGRAM_LOG_PATH}"}
 
 
@@ -1360,7 +1412,9 @@ class TelegramBotBridge:
         if self.is_running():
             return {"success": True, "message": "Telegram 机器人已在当前进程运行"}
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._poll_loop, name="GaryTelegramBridge", daemon=True)
+        self._thread = threading.Thread(
+            target=self._poll_loop, name="GaryTelegramBridge", daemon=True
+        )
         self._thread.start()
         self._started_at = time.time()
         return {"success": True, "message": "Telegram 机器人已启动"}
@@ -1401,16 +1455,19 @@ class TelegramBotBridge:
 
             latest_seen = int(config.get("last_update_id", 0))
             try:
-                updates = _telegram_api_call(
-                    token,
-                    "getUpdates",
-                    {
-                        "offset": latest_seen + 1,
-                        "timeout": 25,
-                        "allowed_updates": ["message"],
-                    },
-                    timeout=35.0,
-                ) or []
+                updates = (
+                    _telegram_api_call(
+                        token,
+                        "getUpdates",
+                        {
+                            "offset": latest_seen + 1,
+                            "timeout": 25,
+                            "allowed_updates": ["message"],
+                        },
+                        timeout=35.0,
+                    )
+                    or []
+                )
                 self._last_error = ""
             except Exception as e:
                 self._last_error = str(e)
@@ -1459,7 +1516,9 @@ class TelegramBotBridge:
                     handled, reply = self._handle_command(normalized, config, chat_id, user_id)
                     if handled:
                         if reply:
-                            _telegram_send_text(token, chat_id, reply, reply_to_message_id=message_id)
+                            _telegram_send_text(
+                                token, chat_id, reply, reply_to_message_id=message_id
+                            )
                         return
             else:
                 handled, reply = self._handle_command(normalized, config, chat_id, user_id)
@@ -1470,7 +1529,12 @@ class TelegramBotBridge:
 
         if not _telegram_is_authorized(config, chat_id, user_id):
             _telegram_log(f"telegram unauthorized chat={chat_id} user={user_id}")
-            _telegram_send_text(token, chat_id, _telegram_unauthorized_text(chat_id, user_id), reply_to_message_id=message_id)
+            _telegram_send_text(
+                token,
+                chat_id,
+                _telegram_unauthorized_text(chat_id, user_id),
+                reply_to_message_id=message_id,
+            )
             return
 
         agent = self._get_agent(chat_id)
@@ -1508,9 +1572,13 @@ class TelegramBotBridge:
                 )
                 reply = "工具已执行，但 AI 没有返回最终正文。请重试一次；若仍复现，我会继续排查。"
             _telegram_send_text(token, chat_id, reply, reply_to_message_id=message_id)
-            _telegram_log(f"telegram reply chat={chat_id} elapsed={time.time() - started_at:.1f}s len={len(reply)}")
+            _telegram_log(
+                f"telegram reply chat={chat_id} elapsed={time.time() - started_at:.1f}s len={len(reply)}"
+            )
 
-    def _handle_command(self, command_text: str, config: dict, chat_id: int, user_id: int) -> tuple[bool, str]:
+    def _handle_command(
+        self, command_text: str, config: dict, chat_id: int, user_id: int
+    ) -> tuple[bool, str]:
         parts = command_text.split(None, 1)
         head = parts[0].lower()
         arg = parts[1].strip() if len(parts) > 1 else ""
@@ -1678,8 +1746,12 @@ def _interactive_telegram_menu() -> bool:
             if daemon["running"]:
                 stop_result = _stop_telegram_daemon()
                 start_result = _start_telegram_daemon()
-                CONSOLE.print(f"[{'green' if stop_result['success'] else 'red'}]{stop_result['message']}[/]")
-                CONSOLE.print(f"[{'green' if start_result['success'] else 'red'}]{start_result['message']}[/]")
+                CONSOLE.print(
+                    f"[{'green' if stop_result['success'] else 'red'}]{stop_result['message']}[/]"
+                )
+                CONSOLE.print(
+                    f"[{'green' if start_result['success'] else 'red'}]{start_result['message']}[/]"
+                )
                 CONSOLE.print()
         return True
 
@@ -1741,7 +1813,9 @@ def handle_telegram_command(args: str, source: str = "cli") -> bool:
             if not result.get("success"):
                 return True
             start_result = _start_telegram_daemon()
-            CONSOLE.print(f"[{'green' if start_result['success'] else 'red'}]{start_result['message']}[/]")
+            CONSOLE.print(
+                f"[{'green' if start_result['success'] else 'red'}]{start_result['message']}[/]"
+            )
             CONSOLE.print()
             return True
         _print_telegram_status(include_commands=True)
@@ -1785,8 +1859,12 @@ def handle_telegram_command(args: str, source: str = "cli") -> bool:
     if subcmd == "restart":
         stop_result = _stop_telegram_daemon()
         start_result = _start_telegram_daemon()
-        CONSOLE.print(f"[{'green' if stop_result['success'] else 'red'}]{stop_result['message']}[/]")
-        CONSOLE.print(f"[{'green' if start_result['success'] else 'red'}]{start_result['message']}[/]")
+        CONSOLE.print(
+            f"[{'green' if stop_result['success'] else 'red'}]{stop_result['message']}[/]"
+        )
+        CONSOLE.print(
+            f"[{'green' if start_result['success'] else 'red'}]{start_result['message']}[/]"
+        )
         CONSOLE.print()
         return True
 
@@ -1880,43 +1958,80 @@ MAX_TOOL_RESULT_LEN = 8000
 # 寄存器地址表（按系列）
 # ─────────────────────────────────────────────────────────────
 _REG_F1 = {
-    "RCC_CR": 0x40021000, "RCC_CFGR": 0x40021004,
-    "RCC_APB1ENR": 0x4002101C, "RCC_APB2ENR": 0x40021018,
-    "GPIOA_CRL": 0x40010800, "GPIOA_CRH": 0x40010804,
-    "GPIOA_IDR": 0x40010808, "GPIOA_ODR": 0x4001080C,
-    "GPIOB_CRL": 0x40010C00, "GPIOB_CRH": 0x40010C04,
-    "GPIOB_IDR": 0x40010C08, "GPIOB_ODR": 0x40010C0C,
-    "GPIOC_CRL": 0x40011000, "GPIOC_CRH": 0x40011004,
-    "TIM1_CR1": 0x40012C00, "TIM1_CCER": 0x40012C20,
-    "TIM2_CR1": 0x40000000, "TIM2_CCER": 0x40000020,
-    "TIM3_CR1": 0x40000400, "TIM3_CCER": 0x40000420,
-    "ADC1_SR": 0x40012400, "ADC1_CR2": 0x40012408,
-    "I2C1_CR1": 0x40005400, "I2C1_SR1": 0x40005414,
-    "I2C2_CR1": 0x40005800, "I2C2_SR1": 0x40005814,
-    "USART1_SR": 0x40013800, "USART1_BRR": 0x40013808,
+    "RCC_CR": 0x40021000,
+    "RCC_CFGR": 0x40021004,
+    "RCC_APB1ENR": 0x4002101C,
+    "RCC_APB2ENR": 0x40021018,
+    "GPIOA_CRL": 0x40010800,
+    "GPIOA_CRH": 0x40010804,
+    "GPIOA_IDR": 0x40010808,
+    "GPIOA_ODR": 0x4001080C,
+    "GPIOB_CRL": 0x40010C00,
+    "GPIOB_CRH": 0x40010C04,
+    "GPIOB_IDR": 0x40010C08,
+    "GPIOB_ODR": 0x40010C0C,
+    "GPIOC_CRL": 0x40011000,
+    "GPIOC_CRH": 0x40011004,
+    "TIM1_CR1": 0x40012C00,
+    "TIM1_CCER": 0x40012C20,
+    "TIM2_CR1": 0x40000000,
+    "TIM2_CCER": 0x40000020,
+    "TIM3_CR1": 0x40000400,
+    "TIM3_CCER": 0x40000420,
+    "ADC1_SR": 0x40012400,
+    "ADC1_CR2": 0x40012408,
+    "I2C1_CR1": 0x40005400,
+    "I2C1_SR1": 0x40005414,
+    "I2C2_CR1": 0x40005800,
+    "I2C2_SR1": 0x40005814,
+    "USART1_SR": 0x40013800,
+    "USART1_BRR": 0x40013808,
 }
 _REG_F4 = {
-    "RCC_CR": 0x40023800, "RCC_CFGR": 0x40023808,
-    "RCC_AHB1ENR": 0x40023830, "RCC_APB1ENR": 0x40023840, "RCC_APB2ENR": 0x40023844,
-    "GPIOA_MODER": 0x40020000, "GPIOA_IDR": 0x40020010, "GPIOA_ODR": 0x40020014,
-    "GPIOB_MODER": 0x40020400, "GPIOB_IDR": 0x40020410, "GPIOB_ODR": 0x40020414,
-    "GPIOC_MODER": 0x40020800, "GPIOC_IDR": 0x40020810, "GPIOC_ODR": 0x40020814,
-    "TIM2_CR1": 0x40000000, "TIM2_CCER": 0x40000020,
-    "TIM3_CR1": 0x40000400, "TIM3_CCER": 0x40000420,
-    "I2C1_CR1": 0x40005400, "I2C1_SR1": 0x40005414,
-    "USART1_SR": 0x40011000, "USART1_BRR": 0x40011008,
+    "RCC_CR": 0x40023800,
+    "RCC_CFGR": 0x40023808,
+    "RCC_AHB1ENR": 0x40023830,
+    "RCC_APB1ENR": 0x40023840,
+    "RCC_APB2ENR": 0x40023844,
+    "GPIOA_MODER": 0x40020000,
+    "GPIOA_IDR": 0x40020010,
+    "GPIOA_ODR": 0x40020014,
+    "GPIOB_MODER": 0x40020400,
+    "GPIOB_IDR": 0x40020410,
+    "GPIOB_ODR": 0x40020414,
+    "GPIOC_MODER": 0x40020800,
+    "GPIOC_IDR": 0x40020810,
+    "GPIOC_ODR": 0x40020814,
+    "TIM2_CR1": 0x40000000,
+    "TIM2_CCER": 0x40000020,
+    "TIM3_CR1": 0x40000400,
+    "TIM3_CCER": 0x40000420,
+    "I2C1_CR1": 0x40005400,
+    "I2C1_SR1": 0x40005414,
+    "USART1_SR": 0x40011000,
+    "USART1_BRR": 0x40011008,
 }
 _REG_F0F3 = {
-    "RCC_CR": 0x40021000, "RCC_CFGR": 0x40021004,
-    "RCC_AHBENR": 0x40021014, "RCC_APB2ENR": 0x40021018, "RCC_APB1ENR": 0x4002101C,
-    "GPIOA_MODER": 0x48000000, "GPIOA_IDR": 0x48000010, "GPIOA_ODR": 0x48000014,
-    "GPIOB_MODER": 0x48000400, "GPIOB_IDR": 0x48000410, "GPIOB_ODR": 0x48000414,
+    "RCC_CR": 0x40021000,
+    "RCC_CFGR": 0x40021004,
+    "RCC_AHBENR": 0x40021014,
+    "RCC_APB2ENR": 0x40021018,
+    "RCC_APB1ENR": 0x4002101C,
+    "GPIOA_MODER": 0x48000000,
+    "GPIOA_IDR": 0x48000010,
+    "GPIOA_ODR": 0x48000014,
+    "GPIOB_MODER": 0x48000400,
+    "GPIOB_IDR": 0x48000410,
+    "GPIOB_ODR": 0x48000414,
     "I2C1_CR1": 0x40005400,
-    "USART1_BRR": 0x40013808, "USART1_CR1": 0x4001380C,
+    "USART1_BRR": 0x40013808,
+    "USART1_CR1": 0x4001380C,
 }
 _REG_COMMON = {
-    "SCB_CFSR": 0xE000ED28, "SCB_HFSR": 0xE000ED2C,
-    "SCB_BFAR": 0xE000ED38, "NVIC_ISER0": 0xE000E100,
+    "SCB_CFSR": 0xE000ED28,
+    "SCB_HFSR": 0xE000ED2C,
+    "SCB_BFAR": 0xE000ED38,
+    "NVIC_ISER0": 0xE000E100,
 }
 
 
@@ -1925,6 +2040,7 @@ def _reg_map(family: str) -> dict:
     regs = dict(base.get(family.lower(), _REG_F1))
     regs.update(_REG_COMMON)
     return regs
+
 
 # ─────────────────────────────────────────────────────────────
 # PyOCDBridge（替换 OpenOCD）
@@ -1948,9 +2064,10 @@ class PyOCDBridge:
     def _chip_to_pyocd_target(self, chip: str) -> str:
         """将 STM32F103C8T6 → stm32f103c8（去掉封装+温度后缀）"""
         import re
+
         name = chip.lower().strip()
         # STM32 命名末尾：封装字母(T/U/H/Y) + 温度等级数字(3/6/7)，如 T6/U3/H7
-        name = re.sub(r'[a-z]\d$', '', name)
+        name = re.sub(r"[a-z]\d$", "", name)
         return name
 
     _pyocd_target_cache: Optional[tuple] = None  # (float, set)
@@ -1968,7 +2085,9 @@ class PyOCDBridge:
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pyocd", "list", "--targets"],
-                capture_output=True, text=True, timeout=15
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
             known = set()
             for line in result.stdout.splitlines():
@@ -1988,6 +2107,7 @@ class PyOCDBridge:
         if not known:
             try:
                 from pyocd.target import TARGET
+
                 known = {k.lower() for k in TARGET}
             except ImportError:
                 return target_name
@@ -2022,7 +2142,9 @@ class PyOCDBridge:
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pyocd", "pack", "install", target_name],
-                capture_output=True, text=True, timeout=120
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
             if result.returncode == 0:
                 CONSOLE.print(f"[green]  支持包安装成功[/]")
@@ -2036,9 +2158,12 @@ class PyOCDBridge:
 
     def _detect_family(self, chip: str) -> str:
         chip_up = chip.upper()
-        if "F0" in chip_up:   return "f0"
-        if "F3" in chip_up:   return "f3"
-        if "F4" in chip_up or "F7" in chip_up or "H7" in chip_up: return "f4"
+        if "F0" in chip_up:
+            return "f0"
+        if "F3" in chip_up:
+            return "f3"
+        if "F4" in chip_up or "F7" in chip_up or "H7" in chip_up:
+            return "f4"
         return "f1"
 
     def set_family(self, family: str):
@@ -2117,9 +2242,7 @@ class PyOCDBridge:
             self._target = self._session.board.target
 
             # 读取 pyocd 实际识别到的目标型号
-            detected = getattr(self._target, "target_type", None) or (
-                target_name or "unknown"
-            )
+            detected = getattr(self._target, "target_type", None) or (target_name or "unknown")
             # 若是自动检测，用检测到的型号更新 chip 变量
             resolved_chip = chip.upper() if explicit_chip else detected.upper()
             resolved_family = self._detect_family(resolved_chip)
@@ -2133,8 +2256,7 @@ class PyOCDBridge:
             }
             self.connected = True
             CONSOLE.print(
-                f"[green]  已连接: {resolved_chip} "
-                f"| 探针: {self._session.board.description}[/]"
+                f"[green]  已连接: {resolved_chip} " f"| 探针: {self._session.board.description}[/]"
             )
             # Warmup：halt→读CPUID，稳定 SWD 会话，保持 halt 状态以便烧录
             try:
@@ -2255,13 +2377,13 @@ class PyOCDBridge:
         if cfsr == 0:
             return "无故障"
         checks = [
-            (0x01,      "IACCVIOL: 指令访问违规"),
-            (0x02,      "DACCVIOL: 数据访问违规"),
-            (0x100,     "IBUSERR: 指令总线错误"),
-            (0x200,     "PRECISERR: 精确总线错误（外设未使能时钟）"),
-            (0x400,     "IMPRECISERR: 非精确总线错误"),
-            (0x10000,   "UNDEFINSTR: 未定义指令"),
-            (0x20000,   "INVSTATE: 无效 EPSR 状态"),
+            (0x01, "IACCVIOL: 指令访问违规"),
+            (0x02, "DACCVIOL: 数据访问违规"),
+            (0x100, "IBUSERR: 指令总线错误"),
+            (0x200, "PRECISERR: 精确总线错误（外设未使能时钟）"),
+            (0x400, "IMPRECISERR: 非精确总线错误"),
+            (0x10000, "UNDEFINSTR: 未定义指令"),
+            (0x20000, "INVSTATE: 无效 EPSR 状态"),
             (0x1000000, "UNALIGNED: 非对齐访问"),
             (0x2000000, "DIVBYZERO: 除零"),
         ]
@@ -2273,6 +2395,7 @@ class PyOCDBridge:
         try:
             from pyocd.core.session import Session
             from pyocd.probe.aggregator import DebugProbeAggregator
+
             probes = DebugProbeAggregator.get_all_connected_probes()
             return [{"uid": p.unique_id, "description": p.product_name} for p in probes]
         except Exception:
@@ -2293,8 +2416,8 @@ def detect_serial_ports(verbose: bool = False) -> list:
     """
     import glob, platform, re
 
-    plat = platform.system()   # 'Windows' / 'Darwin' / 'Linux'
-    found = []                 # 有序去重列表，USB优先
+    plat = platform.system()  # 'Windows' / 'Darwin' / 'Linux'
+    found = []  # 有序去重列表，USB优先
 
     def _add(port: str, usb: bool = False):
         """加入列表，usb=True 时插到所有非usb端口之前"""
@@ -2313,6 +2436,7 @@ def detect_serial_ports(verbose: bool = False) -> list:
     # ── 1. pyserial list_ports（所有平台最可靠的来源）────────────
     try:
         import serial.tools.list_ports as lp
+
         skip_kw = ("bluetooth", "virtual", "rfcomm", "modem")
         for info in lp.comports():
             port = info.device
@@ -2333,8 +2457,8 @@ def detect_serial_ports(verbose: bool = False) -> list:
         # Windows: 枚举 COM1-COM256，跳过已找到的
         try:
             import winreg
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                                 r"HARDWARE\DEVICEMAP\SERIALCOMM")
+
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DEVICEMAP\SERIALCOMM")
             i = 0
             while True:
                 try:
@@ -2350,12 +2474,12 @@ def detect_serial_ports(verbose: bool = False) -> list:
         # macOS: tty.usbserial / tty.usbmodem 优先，cu.* 备选
         for pattern, is_usb in [
             ("/dev/tty.usbserial*", True),
-            ("/dev/tty.usbmodem*",  True),
-            ("/dev/tty.SLAB*",      True),   # CP210x
-            ("/dev/tty.wchusbserial*", True), # CH340
-            ("/dev/cu.usbserial*",  True),
-            ("/dev/cu.usbmodem*",   True),
-            ("/dev/tty.*",          False),
+            ("/dev/tty.usbmodem*", True),
+            ("/dev/tty.SLAB*", True),  # CP210x
+            ("/dev/tty.wchusbserial*", True),  # CH340
+            ("/dev/cu.usbserial*", True),
+            ("/dev/cu.usbmodem*", True),
+            ("/dev/tty.*", False),
         ]:
             for p in sorted(glob.glob(pattern)):
                 if os.access(p, os.R_OK | os.W_OK):
@@ -2373,6 +2497,7 @@ def detect_serial_ports(verbose: bool = False) -> list:
             real = os.path.realpath(p)
             if os.access(real, os.R_OK | os.W_OK) and real not in found:
                 _add(real, usb=True)
+
         # SBC 硬件 UART 补充（ttyAMA 始终可靠；ttyS 用 sysfs 验证有无实际硬件）
         def _has_sysfs_device(port: str) -> bool:
             """Linux: /sys/class/tty/ttySx/device 存在 = 真实硬件 UART"""
@@ -2386,7 +2511,7 @@ def detect_serial_ports(verbose: bool = False) -> list:
         for p in sorted(glob.glob("/dev/ttyS*")):
             if p in found or not os.access(p, os.R_OK | os.W_OK):
                 continue
-            if _has_sysfs_device(p):   # 有 sysfs device 条目 = 真实 UART
+            if _has_sysfs_device(p):  # 有 sysfs device 条目 = 真实 UART
                 _add(p, usb=False)
 
     if verbose:
@@ -2408,7 +2533,7 @@ def auto_open_serial(baud: int = SERIAL_BAUD) -> tuple:
         try:
             s = pyserial.Serial(port, baud, timeout=0.3)
             s.close()
-            return port, None   # 可以打开，返回 port
+            return port, None  # 可以打开，返回 port
         except Exception:
             continue
     return None, None
@@ -2458,9 +2583,11 @@ class SerialMonitor:
                 if p == candidates[-1]:
                     # 最后一个也失败了，给出有用提示（跨平台）
                     import platform as _plt
+
                     if _plt.system() == "Linux" and not os.access(p, os.R_OK | os.W_OK):
                         try:
                             import grp as _grp
+
                             grp_name = _grp.getgrgid(os.stat(p).st_gid).gr_name
                         except Exception:
                             grp_name = "dialout"
@@ -2477,6 +2604,7 @@ class SerialMonitor:
     def _reader(self):
         try:
             import serial as _pyserial
+
             _SerialException = _pyserial.SerialException
         except ImportError:
             _SerialException = OSError
@@ -2535,6 +2663,7 @@ class SerialMonitor:
                 pass
             self._serial = None
 
+
 def _wait_serial_adaptive(
     serial,
     keyword: str,
@@ -2573,7 +2702,7 @@ _serial_connected = False
 _current_chip = DEFAULT_CHIP
 _last_bin_path: Optional[str] = None
 _last_code: Optional[str] = None
-_compiler_mtime: float = 0.0   # compiler.py 上次加载时的 mtime
+_compiler_mtime: float = 0.0  # compiler.py 上次加载时的 mtime
 
 # 调试闭环计数器（每次新任务由 AI 调用 stm32_reset_debug_attempts 重置）
 _debug_attempt = 0
@@ -2584,6 +2713,7 @@ def _get_compiler() -> Compiler:
     """返回 Compiler 单例；若 compiler.py 磁盘文件已更新则自动热重载。"""
     global _compiler, _compiler_mtime
     import importlib
+
     compiler_path = _HERE / "compiler.py"
     try:
         mtime = compiler_path.stat().st_mtime
@@ -2592,11 +2722,11 @@ def _get_compiler() -> Compiler:
     if mtime > _compiler_mtime:
         importlib.reload(_compiler_module)
         globals()["Compiler"] = _compiler_module.Compiler
-        _compiler = None          # 旧实例作废，下方重新创建
+        _compiler = None  # 旧实例作废，下方重新创建
         _compiler_mtime = mtime
     if _compiler is None:
         _compiler = _compiler_module.Compiler()
-        _compiler.check(_current_chip)   # 探测 GCC/HAL，设置 has_gcc/has_hal
+        _compiler.check(_current_chip)  # 探测 GCC/HAL，设置 has_gcc/has_hal
     return _compiler
 
 
@@ -2618,6 +2748,7 @@ def _get_serial() -> SerialMonitor:
 # STM32 专属工具实现
 # ─────────────────────────────────────────────────────────────
 
+
 def stm32_generate_font(text: str, size: int = 16) -> dict:
     """
     将任意文字（含中文）渲染为 STM32 OLED 用的 C 点阵数组。
@@ -2631,6 +2762,7 @@ def stm32_generate_font(text: str, size: int = 16) -> dict:
         return {"success": False, "message": "需要安装 Pillow: pip install Pillow"}
 
     import platform as _plat
+
     # 跨平台字体候选
     def _find_cjk_font() -> Optional[str]:
         """动态查找系统 CJK 字体路径"""
@@ -2638,7 +2770,9 @@ def stm32_generate_font(text: str, size: int = 16) -> dict:
         try:
             r = subprocess.run(
                 ["fc-match", "--format=%{file}", ":lang=zh"],
-                capture_output=True, text=True, timeout=5
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if r.returncode == 0 and r.stdout.strip():
                 path = r.stdout.strip()
@@ -2663,6 +2797,7 @@ def stm32_generate_font(text: str, size: int = 16) -> dict:
                 return p
         return None
         # 原来的 for fp in font_candidates: ... 全部替换为：
+
     font_path = _find_cjk_font()
     if font_path is None:
         return {"success": False, "message": "未找到中文字体，请安装 fonts-noto-cjk"}
@@ -2670,7 +2805,7 @@ def stm32_generate_font(text: str, size: int = 16) -> dict:
         font = ImageFont.truetype(font_path, size)
     except Exception as e:
         return {"success": False, "message": f"字体加载失败 ({font_path}): {e}"}
-        
+
     def _render_char(char: str) -> list:
         """渲染单个字符到 size×size 位图，返回 0/1 列表（行优先）"""
         img = Image.new("L", (size, size), 0)
@@ -2697,7 +2832,7 @@ def stm32_generate_font(text: str, size: int = 16) -> dict:
                 for bit in range(8):
                     col = b * 8 + bit
                     if col < size and pixels[row * size + col]:
-                        byte |= (1 << (7 - bit))
+                        byte |= 1 << (7 - bit)
                 data.append(byte)
         return data
 
@@ -2764,16 +2899,13 @@ void OLED_ShowFont{size}(uint8_t x, uint8_t y, uint8_t idx) {{
 """
 
     # ── ASCII 预览（调试用）────────────────────────────────────
-    preview_block = "\n\n".join(
-        f"/* '{c}':\n{p} */"
-        for c, p in zip(char_list, previews)
-    )
+    preview_block = "\n\n".join(f"/* '{c}':\n{p} */" for c, p in zip(char_list, previews))
 
     c_code = array_code + display_func
     return {
         "success": True,
         "c_code": c_code,
-        "preview": preview_block,        # ASCII 预览，可用于肉眼验证字形
+        "preview": preview_block,  # ASCII 预览，可用于肉眼验证字形
         "char_count": len(text),
         "bytes_per_char": bytes_per_char,
         "font_size": size,
@@ -2831,11 +2963,19 @@ def stm32_serial_connect(port: str = None, baud: int = None) -> dict:
     _serial_connected = serial.open(port or None, use_baud)
     actual_port = getattr(serial, "_port", port or "自动检测")
     if _serial_connected:
-        return {"success": True, "port": actual_port, "baud": use_baud,
-                "message": f"串口已连接: {actual_port} @ {use_baud}"}
+        return {
+            "success": True,
+            "port": actual_port,
+            "baud": use_baud,
+            "message": f"串口已连接: {actual_port} @ {use_baud}",
+        }
     candidates = detect_serial_ports()
-    return {"success": False, "port": port, "baud": use_baud,
-            "message": f"串口打开失败，可用端口: {candidates if candidates else '无'}"}
+    return {
+        "success": False,
+        "port": port,
+        "baud": use_baud,
+        "message": f"串口打开失败，可用端口: {candidates if candidates else '无'}",
+    }
 
 
 def stm32_serial_disconnect() -> dict:
@@ -2947,7 +3087,11 @@ def stm32_recompile(mode: str = "auto") -> dict:
         return {"success": False, "message": "latest_workspace/main.c 不存在，请先编译一次完整代码"}
     code = main_c.read_text(encoding="utf-8")
     if mode == "auto":
-        mode = "rtos" if ("FreeRTOS.h" in code or "task.h" in code or "xTaskCreate" in code) else "bare"
+        mode = (
+            "rtos"
+            if ("FreeRTOS.h" in code or "task.h" in code or "xTaskCreate" in code)
+            else "bare"
+        )
     if mode == "rtos":
         return stm32_compile_rtos(code)
     return stm32_compile(code)
@@ -2959,6 +3103,7 @@ def stm32_regen_bsp(chip: str = None) -> dict:
     自动检查 startup.s 是否包含 FPU 使能代码（Cortex-M4 必须）。
     """
     import importlib
+
     # 强制重载 compiler 模块，绕过进程内缓存
     importlib.reload(_compiler_module)
     globals()["Compiler"] = _compiler_module.Compiler
@@ -2982,6 +3127,7 @@ def stm32_regen_bsp(chip: str = None) -> dict:
 
     # 验证 startup.s 包含 FPU 使能
     from config import BUILD_DIR
+
     startup_path = BUILD_DIR / "startup.s"
     has_fpu_enable = False
     if startup_path.exists():
@@ -3010,7 +3156,7 @@ def stm32_regen_bsp(chip: str = None) -> dict:
         "files_regenerated": ["startup.s", "link.ld"],
         "warnings": warnings,
         "message": f"BSP 文件已重新生成 ({cpu}, {'有 FPU' if fpu else '无 FPU'}，{flash_k}K Flash / {ram_k}K RAM)"
-                   + (("；" + "；".join(warnings)) if warnings else ""),
+        + (("；" + "；".join(warnings)) if warnings else ""),
     }
 
 
@@ -3027,8 +3173,9 @@ def stm32_analyze_fault_rtos() -> dict:
         return {"success": False, "message": "硬件未连接"}
 
     bridge = _get_bridge()
-    regs = bridge.read_registers(["SCB_CFSR", "SCB_HFSR", "SCB_BFAR", "PC",
-                                   "SCB_MMFAR", "SCB_CPACR_FIELD"])
+    regs = bridge.read_registers(
+        ["SCB_CFSR", "SCB_HFSR", "SCB_BFAR", "PC", "SCB_MMFAR", "SCB_CPACR_FIELD"]
+    )
     if not regs:
         regs = bridge.read_registers(["SCB_CFSR", "SCB_HFSR", "SCB_BFAR", "PC"])
     if not regs:
@@ -3037,18 +3184,19 @@ def stm32_analyze_fault_rtos() -> dict:
     cfsr = regs.get("SCB_CFSR", "0x0")
     hfsr = regs.get("SCB_HFSR", "0x0")
     bfar = regs.get("SCB_BFAR", "0x0")
-    pc   = regs.get("PC", "0x0")
+    pc = regs.get("PC", "0x0")
 
     try:
         cfsr_v = int(cfsr, 16)
         hfsr_v = int(hfsr, 16)
         bfar_v = int(bfar, 16)
-        pc_v   = int(pc,   16)
+        pc_v = int(pc, 16)
     except (ValueError, TypeError):
         cfsr_v = hfsr_v = bfar_v = pc_v = 0
 
     # 检查 startup.s 的 FPU 使能
     from config import BUILD_DIR
+
     startup_path = BUILD_DIR / "startup.s"
     has_fpu_in_startup = False
     if startup_path.exists():
@@ -3070,24 +3218,30 @@ def stm32_analyze_fault_rtos() -> dict:
 
     preciserr = bool(cfsr_v & (1 << 9))
     bfarvalid = bool(cfsr_v & (1 << 15))
-    iaccviol  = bool(cfsr_v & (1 << 0))
-    undefinstr= bool(cfsr_v & (1 << 16))
-    stkovf    = bool(cfsr_v & (1 << 12))   # STKOVF: 栈下溢
-    unstkovf  = bool(cfsr_v & (1 << 11))   # UNSTKOVF: 不稳定栈下溢
+    iaccviol = bool(cfsr_v & (1 << 0))
+    undefinstr = bool(cfsr_v & (1 << 16))
+    stkovf = bool(cfsr_v & (1 << 12))  # STKOVF: 栈下溢
+    unstkovf = bool(cfsr_v & (1 << 11))  # UNSTKOVF: 不稳定栈下溢
 
     # 判断 BFAR 是否"合理"（STM32 合法地址范围）
-    bfar_valid_range = (0x08000000 <= bfar_v < 0x08200000 or
-                        0x20000000 <= bfar_v < 0x20030000 or
-                        0x40000000 <= bfar_v < 0x60000000 or
-                        0xE0000000 <= bfar_v)
+    bfar_valid_range = (
+        0x08000000 <= bfar_v < 0x08200000
+        or 0x20000000 <= bfar_v < 0x20030000
+        or 0x40000000 <= bfar_v < 0x60000000
+        or 0xE0000000 <= bfar_v
+    )
     bfar_garbage = bfarvalid and not bfar_valid_range
 
     if preciserr and bfar_garbage and not fpu_hw_enabled:
-        root_cause = "FPU 未使能：ARM_CM4F port.c 的 PendSV_Handler 执行 vpush/vpop 时触发 PRECISERR"
-        fix = ("修复方法（已在 compiler.py 修复，重新编译即可）：\n"
-               "  1. 调用 stm32_regen_bsp() 重新生成 startup.s（含 CPACR 初始化）\n"
-               "  2. 重新编译：stm32_compile_rtos(code)\n"
-               "  不需要在代码里手动写 SCB->CPACR")
+        root_cause = (
+            "FPU 未使能：ARM_CM4F port.c 的 PendSV_Handler 执行 vpush/vpop 时触发 PRECISERR"
+        )
+        fix = (
+            "修复方法（已在 compiler.py 修复，重新编译即可）：\n"
+            "  1. 调用 stm32_regen_bsp() 重新生成 startup.s（含 CPACR 初始化）\n"
+            "  2. 重新编译：stm32_compile_rtos(code)\n"
+            "  不需要在代码里手动写 SCB->CPACR"
+        )
         severity = "critical"
     elif undefinstr and not fpu_hw_enabled:
         root_cause = "FPU 指令在 FPU 禁用状态下执行（UNDEFINSTR）"
@@ -3127,8 +3281,10 @@ def stm32_analyze_fault_rtos() -> dict:
         "fix": fix,
         "startup_note": startup_note,
         "cfsr_bits": {
-            "PRECISERR": preciserr, "BFARVALID": bfarvalid,
-            "IACCVIOL": iaccviol, "UNDEFINSTR": undefinstr,
+            "PRECISERR": preciserr,
+            "BFARVALID": bfarvalid,
+            "IACCVIOL": iaccviol,
+            "UNDEFINSTR": undefinstr,
             "STKOVF": stkovf,
         },
     }
@@ -3139,54 +3295,71 @@ def stm32_rtos_check_code(code: str) -> dict:
     检查 SysTick 冲突、HAL_Delay 陷阱、缺少 hook 函数、栈大小、ISR 安全等。
     """
     import re
+
     errors = []
     warnings = []
     suggestions = []
 
     # 1. SysTick_Handler 冲突
-    if re.search(r'\bvoid\s+SysTick_Handler\b', code):
-        errors.append("❌ 禁止自定义 SysTick_Handler —— FreeRTOS 已通过 xPortSysTickHandler 接管 SysTick。"
-                       "删除 SysTick_Handler，改用 vApplicationTickHook() 维持 HAL_IncTick()")
+    if re.search(r"\bvoid\s+SysTick_Handler\b", code):
+        errors.append(
+            "❌ 禁止自定义 SysTick_Handler —— FreeRTOS 已通过 xPortSysTickHandler 接管 SysTick。"
+            "删除 SysTick_Handler，改用 vApplicationTickHook() 维持 HAL_IncTick()"
+        )
 
     # 2. HAL_Delay 在 xTaskCreate 之前
     hal_delay_pos = code.find("HAL_Delay")
     xtask_pos = code.find("xTaskCreate")
     if hal_delay_pos >= 0 and xtask_pos >= 0 and hal_delay_pos < xtask_pos:
         # 排除注释中的情况（简单排除）
-        line_with_delay = code[:hal_delay_pos].rfind('\n')
+        line_with_delay = code[:hal_delay_pos].rfind("\n")
         delay_line = code[line_with_delay:hal_delay_pos]
-        if '//' not in delay_line and '/*' not in delay_line:
-            errors.append("❌ HAL_Delay() 在 xTaskCreate() 之前调用 —— SysTick 会触发 FreeRTOS tick handler，"
-                          "访问未初始化的任务列表导致 HardFault。"
-                          "把含 HAL_Delay 的初始化移到任务函数内部")
+        if "//" not in delay_line and "/*" not in delay_line:
+            errors.append(
+                "❌ HAL_Delay() 在 xTaskCreate() 之前调用 —— SysTick 会触发 FreeRTOS tick handler，"
+                "访问未初始化的任务列表导致 HardFault。"
+                "把含 HAL_Delay 的初始化移到任务函数内部"
+            )
 
     # 3. 必需 hook 函数
     required_hooks = {
-        "vApplicationTickHook":          "void vApplicationTickHook(void) { HAL_IncTick(); }",
-        "vApplicationMallocFailedHook":  "void vApplicationMallocFailedHook(void) { while(1); }",
+        "vApplicationTickHook": "void vApplicationTickHook(void) { HAL_IncTick(); }",
+        "vApplicationMallocFailedHook": "void vApplicationMallocFailedHook(void) { while(1); }",
         "vApplicationStackOverflowHook": "void vApplicationStackOverflowHook(TaskHandle_t t, char *n) { while(1); }",
-        "vApplicationIdleHook":          "void vApplicationIdleHook(void) {}",
+        "vApplicationIdleHook": "void vApplicationIdleHook(void) {}",
     }
     for hook, template in required_hooks.items():
         if hook not in code:
             errors.append(f"❌ 缺少 {hook} —— 请添加: {template}")
 
     # 4. 任务栈大小检查
-    task_creates = re.findall(
-        r'xTaskCreate\s*\(\s*(\w+)\s*,\s*"[^"]*"\s*,\s*(\d+)', code)
+    task_creates = re.findall(r'xTaskCreate\s*\(\s*(\w+)\s*,\s*"[^"]*"\s*,\s*(\d+)', code)
     for func_name, stack_str in task_creates:
         stack = int(stack_str)
         # 查找任务函数体
-        func_pattern = rf'void\s+{re.escape(func_name)}\s*\('
+        func_pattern = rf"void\s+{re.escape(func_name)}\s*\("
         func_match = re.search(func_pattern, code)
         if func_match:
             # 提取函数体（简单：从匹配位置到后续 2000 字符）
-            func_body = code[func_match.start():func_match.start() + 2000]
-            has_float = any(kw in func_body for kw in
-                           ['float ', 'double ', 'sinf(', 'cosf(', 'sqrtf(', 'tanf(',
-                            'arm_', '.0f', 'fabsf(', 'powf(', 'logf(', 'expf('])
-            has_printf = any(kw in func_body for kw in
-                            ['snprintf(', 'sprintf(', 'printf('])
+            func_body = code[func_match.start() : func_match.start() + 2000]
+            has_float = any(
+                kw in func_body
+                for kw in [
+                    "float ",
+                    "double ",
+                    "sinf(",
+                    "cosf(",
+                    "sqrtf(",
+                    "tanf(",
+                    "arm_",
+                    ".0f",
+                    "fabsf(",
+                    "powf(",
+                    "logf(",
+                    "expf(",
+                ]
+            )
+            has_printf = any(kw in func_body for kw in ["snprintf(", "sprintf(", "printf("])
             if has_printf and stack < 384:
                 warnings.append(f"⚠ 任务 {func_name} 使用 snprintf 但栈仅 {stack} words，建议 ≥384")
             elif has_float and stack < 256:
@@ -3195,39 +3368,54 @@ def stm32_rtos_check_code(code: str) -> dict:
                 warnings.append(f"⚠ 任务 {func_name} 栈仅 {stack} words，建议 ≥128")
 
     # 5. ISR 安全检查 —— 在 IRQHandler 中使用非 FromISR 的 API
-    irq_funcs = re.findall(r'void\s+(\w+_IRQHandler)\s*\(void\)\s*\{', code)
+    irq_funcs = re.findall(r"void\s+(\w+_IRQHandler)\s*\(void\)\s*\{", code)
     for irq_name in irq_funcs:
         # 提取 IRQ 函数体
-        irq_start = code.find(f'void {irq_name}')
+        irq_start = code.find(f"void {irq_name}")
         if irq_start >= 0:
-            irq_body = code[irq_start:irq_start + 1500]
+            irq_body = code[irq_start : irq_start + 1500]
             # 检查危险 API（非 FromISR 版本）
-            unsafe_apis = ['xQueueSend(', 'xQueueReceive(', 'xSemaphoreTake(',
-                           'xSemaphoreGive(', 'vTaskDelay(', 'vTaskDelayUntil(',
-                           'xTaskCreate(', 'vTaskDelete(', 'printf(']
+            unsafe_apis = [
+                "xQueueSend(",
+                "xQueueReceive(",
+                "xSemaphoreTake(",
+                "xSemaphoreGive(",
+                "vTaskDelay(",
+                "vTaskDelayUntil(",
+                "xTaskCreate(",
+                "vTaskDelete(",
+                "printf(",
+            ]
             for api in unsafe_apis:
-                if api in irq_body and api.replace('(', 'FromISR(') not in irq_body:
-                    safe_api = api.replace('(', 'FromISR(')
+                if api in irq_body and api.replace("(", "FromISR(") not in irq_body:
+                    safe_api = api.replace("(", "FromISR(")
                     warnings.append(f"⚠ {irq_name} 中使用了 {api} —— ISR 中必须用 {safe_api}")
 
     # 6. 缺少头文件
-    if 'strlen(' in code or 'memset(' in code or 'memcpy(' in code:
-        if '#include <string.h>' not in code and '#include<string.h>' not in code:
+    if "strlen(" in code or "memset(" in code or "memcpy(" in code:
+        if "#include <string.h>" not in code and "#include<string.h>" not in code:
             warnings.append("⚠ 使用了 strlen/memset/memcpy 但未 #include <string.h>")
-    if 'sinf(' in code or 'cosf(' in code or 'sqrtf(' in code:
-        if '#include <math.h>' not in code and '#include<math.h>' not in code:
+    if "sinf(" in code or "cosf(" in code or "sqrtf(" in code:
+        if "#include <math.h>" not in code and "#include<math.h>" not in code:
             warnings.append("⚠ 使用了 sinf/cosf/sqrtf 但未 #include <math.h>")
-    if 'snprintf(' in code:
-        if '#include <stdio.h>' not in code and '#include<stdio.h>' not in code:
+    if "snprintf(" in code:
+        if "#include <stdio.h>" not in code and "#include<stdio.h>" not in code:
             warnings.append("⚠ 使用了 snprintf 但未 #include <stdio.h>")
 
     # 7. 建议
-    if 'xSemaphoreCreateBinary' in code and 'vTaskNotifyGive' not in code:
-        suggestions.append("💡 考虑用任务通知 (vTaskNotifyGive/ulTaskNotifyTake) 替代二值信号量，速度更快且更省内存")
-    if 'xEventGroupCreate' not in code and re.findall(r'xSemaphoreCreateBinary', code).__len__() >= 3:
+    if "xSemaphoreCreateBinary" in code and "vTaskNotifyGive" not in code:
+        suggestions.append(
+            "💡 考虑用任务通知 (vTaskNotifyGive/ulTaskNotifyTake) 替代二值信号量，速度更快且更省内存"
+        )
+    if (
+        "xEventGroupCreate" not in code
+        and re.findall(r"xSemaphoreCreateBinary", code).__len__() >= 3
+    ):
         suggestions.append("💡 多个二值信号量可能适合用事件组 (xEventGroupCreate) 替代")
-    if 'vTaskDelayUntil' not in code and 'vTaskDelay' in code:
-        suggestions.append("💡 需要精确周期执行时用 vTaskDelayUntil 替代 vTaskDelay（避免累积漂移）")
+    if "vTaskDelayUntil" not in code and "vTaskDelay" in code:
+        suggestions.append(
+            "💡 需要精确周期执行时用 vTaskDelayUntil 替代 vTaskDelay（避免累积漂移）"
+        )
 
     return {
         "success": True,
@@ -3236,9 +3424,14 @@ def stm32_rtos_check_code(code: str) -> dict:
         "suggestions": suggestions,
         "error_count": len(errors),
         "warning_count": len(warnings),
-        "message": (f"检查完成: {len(errors)} 个错误, {len(warnings)} 个警告, {len(suggestions)} 个建议"
-                    + ("\n" + "\n".join(errors + warnings + suggestions) if errors or warnings or suggestions
-                       else "\n✅ 代码通过所有 RTOS 检查")),
+        "message": (
+            f"检查完成: {len(errors)} 个错误, {len(warnings)} 个警告, {len(suggestions)} 个建议"
+            + (
+                "\n" + "\n".join(errors + warnings + suggestions)
+                if errors or warnings or suggestions
+                else "\n✅ 代码通过所有 RTOS 检查"
+            )
+        ),
     }
 
 
@@ -3251,6 +3444,7 @@ def stm32_rtos_task_stats() -> dict:
         return {"success": False, "message": "硬件未连接"}
 
     from config import BUILD_DIR
+
     elf_path = BUILD_DIR / "firmware.elf"
     if not elf_path.exists():
         return {"success": False, "message": "ELF 文件不存在，请先编译"}
@@ -3259,21 +3453,22 @@ def stm32_rtos_task_stats() -> dict:
 
     # 通过 nm 解析 ELF 符号表获取变量地址
     import subprocess
+
     symbols_to_find = {
-        "uxCurrentNumberOfTasks": None,     # uint32_t 任务数
-        "xFreeBytesRemaining": None,        # size_t heap_4 剩余
+        "uxCurrentNumberOfTasks": None,  # uint32_t 任务数
+        "xFreeBytesRemaining": None,  # size_t heap_4 剩余
         "xMinimumEverFreeBytesRemaining": None,  # size_t 历史最低
-        "pxCurrentTCB": None,               # TCB* 当前任务
+        "pxCurrentTCB": None,  # TCB* 当前任务
     }
 
     try:
         r = subprocess.run(
-            ["arm-none-eabi-nm", "-g", str(elf_path)],
-            capture_output=True, text=True, timeout=5)
+            ["arm-none-eabi-nm", "-g", str(elf_path)], capture_output=True, text=True, timeout=5
+        )
         if r.returncode != 0:
             return {"success": False, "message": "nm 解析 ELF 失败"}
 
-        for line in r.stdout.split('\n'):
+        for line in r.stdout.split("\n"):
             parts = line.strip().split()
             if len(parts) >= 3:
                 addr_str, _typ, name = parts[0], parts[1], parts[2]
@@ -3312,7 +3507,7 @@ def stm32_rtos_task_stats() -> dict:
                     if b == 0:
                         break
                     name_bytes.append(b)
-                result["current_task_name"] = name_bytes.decode('ascii', errors='replace')
+                result["current_task_name"] = name_bytes.decode("ascii", errors="replace")
             except Exception:
                 pass
 
@@ -3334,8 +3529,9 @@ def stm32_rtos_task_stats() -> dict:
     return result
 
 
-def stm32_rtos_suggest_config(task_count: int, use_fpu: bool = False,
-                               use_printf: bool = False, ram_k: int = 0) -> dict:
+def stm32_rtos_suggest_config(
+    task_count: int, use_fpu: bool = False, use_printf: bool = False, ram_k: int = 0
+) -> dict:
     """根据用户的任务需求，计算推荐的 FreeRTOS 配置参数。
     估算堆大小、栈大小、优先级数，并检查 RAM 是否足够。
     """
@@ -3359,7 +3555,7 @@ def stm32_rtos_suggest_config(task_count: int, use_fpu: bool = False,
         stack_reason = "普通任务最小 128 words"
 
     # 堆大小估算
-    tcb_size = 92       # TCB 约 92 字节
+    tcb_size = 92  # TCB 约 92 字节
     stack_bytes = recommended_stack * 4  # words → bytes
     per_task = tcb_size + stack_bytes
     idle_task = per_task  # Idle 任务
@@ -3399,15 +3595,18 @@ def stm32_rtos_suggest_config(task_count: int, use_fpu: bool = False,
         "ram_total_kb": actual_ram_k,
         "per_task_overhead_bytes": per_task,
         "warnings": warnings,
-        "message": (f"推荐配置: 栈={recommended_stack}words, 堆={recommended_heap}B, "
-                    f"优先级={min(task_count + 2, 7)}, RAM预估使用{ram_pct}%"
-                    + (("  " + "; ".join(warnings)) if warnings else "")),
+        "message": (
+            f"推荐配置: 栈={recommended_stack}words, 堆={recommended_heap}B, "
+            f"优先级={min(task_count + 2, 7)}, RAM预估使用{ram_pct}%"
+            + (("  " + "; ".join(warnings)) if warnings else "")
+        ),
     }
     return config
 
 
-def stm32_rtos_plan_project(description: str, peripherals: list = None,
-                             task_hints: list = None) -> dict:
+def stm32_rtos_plan_project(
+    description: str, peripherals: list = None, task_hints: list = None
+) -> dict:
     """FreeRTOS 项目规划工具 —— 复杂 RTOS 项目的架构规划。
 
     根据用户需求描述，生成结构化的项目规划：
@@ -3436,27 +3635,43 @@ def stm32_rtos_plan_project(description: str, peripherals: list = None,
     desc_lower = description.lower()
 
     # 检测是否涉及浮点
-    uses_float = any(kw in desc_lower for kw in
-                     ['浮点', 'float', 'sin', 'cos', 'pid', '温度计算', 'dsp',
-                      'adc采样', '滤波', 'fft', '角度', '加速度', '陀螺仪'])
+    uses_float = any(
+        kw in desc_lower
+        for kw in [
+            "浮点",
+            "float",
+            "sin",
+            "cos",
+            "pid",
+            "温度计算",
+            "dsp",
+            "adc采样",
+            "滤波",
+            "fft",
+            "角度",
+            "加速度",
+            "陀螺仪",
+        ]
+    )
 
     # 检测是否需要 printf/snprintf
-    uses_printf = any(kw in desc_lower for kw in
-                      ['printf', 'snprintf', '格式化', '打印浮点', '调试输出'])
+    uses_printf = any(
+        kw in desc_lower for kw in ["printf", "snprintf", "格式化", "打印浮点", "调试输出"]
+    )
 
     # 检测外设
     detected_peripherals = []
     periph_map = {
-        'uart': ['串口', 'uart', 'usart', '通信', '打印', '日志'],
-        'i2c': ['i2c', 'oled', '传感器', 'bmp', 'sht', 'mpu', '加速度', '陀螺仪', '屏幕'],
-        'spi': ['spi', 'sd卡', 'flash', 'w25q', 'tft', 'lcd'],
-        'adc': ['adc', '模拟', '采样', '电压', '温度', '光照'],
-        'tim_pwm': ['pwm', '舵机', '电机', '蜂鸣器', '呼吸灯', '调光'],
-        'tim_basic': ['定时器', 'timer', '周期', '计时'],
-        'gpio_out': ['led', '继电器', '数码管', '指示灯', '开关输出'],
-        'gpio_in': ['按键', '按钮', '开关输入', '限位', '光电'],
-        'exti': ['外部中断', '中断触发', '边沿检测'],
-        'dma': ['dma', '高速传输'],
+        "uart": ["串口", "uart", "usart", "通信", "打印", "日志"],
+        "i2c": ["i2c", "oled", "传感器", "bmp", "sht", "mpu", "加速度", "陀螺仪", "屏幕"],
+        "spi": ["spi", "sd卡", "flash", "w25q", "tft", "lcd"],
+        "adc": ["adc", "模拟", "采样", "电压", "温度", "光照"],
+        "tim_pwm": ["pwm", "舵机", "电机", "蜂鸣器", "呼吸灯", "调光"],
+        "tim_basic": ["定时器", "timer", "周期", "计时"],
+        "gpio_out": ["led", "继电器", "数码管", "指示灯", "开关输出"],
+        "gpio_in": ["按键", "按钮", "开关输入", "限位", "光电"],
+        "exti": ["外部中断", "中断触发", "边沿检测"],
+        "dma": ["dma", "高速传输"],
     }
     for periph, keywords in periph_map.items():
         if any(kw in desc_lower for kw in keywords):
@@ -3472,69 +3687,79 @@ def stm32_rtos_plan_project(description: str, peripherals: list = None,
 
     # 根据需求自动推荐任务结构
     task_templates = {
-        'sensor': {
-            'triggers': ['传感器', 'adc', '采样', '温度', '湿度', '加速度', '陀螺仪', '光照', '压力'],
-            'name': 'SensorTask',
-            'purpose': '传感器数据采集与处理',
-            'priority': 3,
-            'stack': 256 if uses_float else 128,
-            'comm_out': 'Queue（发送处理后的数据）',
+        "sensor": {
+            "triggers": [
+                "传感器",
+                "adc",
+                "采样",
+                "温度",
+                "湿度",
+                "加速度",
+                "陀螺仪",
+                "光照",
+                "压力",
+            ],
+            "name": "SensorTask",
+            "purpose": "传感器数据采集与处理",
+            "priority": 3,
+            "stack": 256 if uses_float else 128,
+            "comm_out": "Queue（发送处理后的数据）",
         },
-        'display': {
-            'triggers': ['显示', 'oled', 'lcd', 'tft', '数码管', '屏幕'],
-            'name': 'DisplayTask',
-            'purpose': '显示刷新（从队列接收数据更新显示）',
-            'priority': 1,
-            'stack': 256,
-            'comm_in': 'Queue（接收要显示的数据）',
+        "display": {
+            "triggers": ["显示", "oled", "lcd", "tft", "数码管", "屏幕"],
+            "name": "DisplayTask",
+            "purpose": "显示刷新（从队列接收数据更新显示）",
+            "priority": 1,
+            "stack": 256,
+            "comm_in": "Queue（接收要显示的数据）",
         },
-        'control': {
-            'triggers': ['控制', '电机', '舵机', 'pid', '调节', '反馈'],
-            'name': 'ControlTask',
-            'purpose': '控制算法执行（PID 等）',
-            'priority': 4,
-            'stack': 384 if uses_float else 256,
-            'comm_in': 'Queue（接收传感器数据）',
-            'comm_out': 'Queue/直接GPIO（输出控制信号）',
+        "control": {
+            "triggers": ["控制", "电机", "舵机", "pid", "调节", "反馈"],
+            "name": "ControlTask",
+            "purpose": "控制算法执行（PID 等）",
+            "priority": 4,
+            "stack": 384 if uses_float else 256,
+            "comm_in": "Queue（接收传感器数据）",
+            "comm_out": "Queue/直接GPIO（输出控制信号）",
         },
-        'comm': {
-            'triggers': ['通信', '上位机', '蓝牙', 'wifi', '发送', '协议'],
-            'name': 'CommTask',
-            'purpose': '通信处理（串口/蓝牙数据收发）',
-            'priority': 2,
-            'stack': 384 if uses_printf else 256,
-            'comm_in': 'Queue（待发送的数据）',
+        "comm": {
+            "triggers": ["通信", "上位机", "蓝牙", "wifi", "发送", "协议"],
+            "name": "CommTask",
+            "purpose": "通信处理（串口/蓝牙数据收发）",
+            "priority": 2,
+            "stack": 384 if uses_printf else 256,
+            "comm_in": "Queue（待发送的数据）",
         },
-        'led': {
-            'triggers': ['led', '指示灯', '呼吸灯', '闪烁'],
-            'name': 'LEDTask',
-            'purpose': 'LED 状态指示',
-            'priority': 1,
-            'stack': 128,
+        "led": {
+            "triggers": ["led", "指示灯", "呼吸灯", "闪烁"],
+            "name": "LEDTask",
+            "purpose": "LED 状态指示",
+            "priority": 1,
+            "stack": 128,
         },
-        'button': {
-            'triggers': ['按键', '按钮', '输入', '用户交互'],
-            'name': 'ButtonTask',
-            'purpose': '按键扫描与事件分发',
-            'priority': 2,
-            'stack': 128,
-            'comm_out': 'TaskNotify/EventGroup（按键事件通知其他任务）',
+        "button": {
+            "triggers": ["按键", "按钮", "输入", "用户交互"],
+            "name": "ButtonTask",
+            "purpose": "按键扫描与事件分发",
+            "priority": 2,
+            "stack": 128,
+            "comm_out": "TaskNotify/EventGroup（按键事件通知其他任务）",
         },
-        'alarm': {
-            'triggers': ['报警', '蜂鸣器', '警报', '阈值'],
-            'name': 'AlarmTask',
-            'purpose': '报警判断与执行',
-            'priority': 3,
-            'stack': 128,
-            'comm_in': 'TaskNotify（由传感器任务触发）',
+        "alarm": {
+            "triggers": ["报警", "蜂鸣器", "警报", "阈值"],
+            "name": "AlarmTask",
+            "purpose": "报警判断与执行",
+            "priority": 3,
+            "stack": 128,
+            "comm_in": "TaskNotify（由传感器任务触发）",
         },
-        'log': {
-            'triggers': ['日志', '记录', 'sd卡', '存储'],
-            'name': 'LogTask',
-            'purpose': '数据记录与存储',
-            'priority': 1,
-            'stack': 384,
-            'comm_in': 'Queue（待记录的数据）',
+        "log": {
+            "triggers": ["日志", "记录", "sd卡", "存储"],
+            "name": "LogTask",
+            "purpose": "数据记录与存储",
+            "priority": 1,
+            "stack": 384,
+            "comm_in": "Queue（待记录的数据）",
         },
     }
 
@@ -3544,115 +3769,143 @@ def stm32_rtos_plan_project(description: str, peripherals: list = None,
             if isinstance(hint, dict):
                 planned_tasks.append(hint)
             elif isinstance(hint, str):
-                planned_tasks.append({
-                    'name': hint,
-                    'purpose': f'用户指定任务: {hint}',
-                    'priority': 2,
-                    'stack': 256 if uses_float else 128,
-                })
+                planned_tasks.append(
+                    {
+                        "name": hint,
+                        "purpose": f"用户指定任务: {hint}",
+                        "priority": 2,
+                        "stack": 256 if uses_float else 128,
+                    }
+                )
     else:
         # 自动推荐
         for tmpl_name, tmpl in task_templates.items():
-            if any(kw in desc_lower for kw in tmpl['triggers']):
-                task = {k: v for k, v in tmpl.items() if k != 'triggers'}
+            if any(kw in desc_lower for kw in tmpl["triggers"]):
+                task = {k: v for k, v in tmpl.items() if k != "triggers"}
                 planned_tasks.append(task)
 
     # 如果没有匹配到任何任务，给一个默认的
     if not planned_tasks:
-        planned_tasks.append({
-            'name': 'MainTask',
-            'purpose': '主要业务逻辑',
-            'priority': 2,
-            'stack': 256 if uses_float else 128,
-        })
+        planned_tasks.append(
+            {
+                "name": "MainTask",
+                "purpose": "主要业务逻辑",
+                "priority": 2,
+                "stack": 256 if uses_float else 128,
+            }
+        )
 
     # ── 中断规划 ──────────────────────────────────────────
     interrupt_plan = []
-    if 'exti' in detected_peripherals or '中断' in desc_lower:
-        interrupt_plan.append({
-            'irq': 'EXTIx_IRQHandler',
-            'strategy': 'vTaskNotifyGiveFromISR → 唤醒处理任务',
-            'note': 'ISR 中仅做通知，数据处理在任务中完成',
-        })
-    if 'uart' in detected_peripherals:
-        interrupt_plan.append({
-            'irq': 'USARTx_IRQHandler',
-            'strategy': '接收中断 → xQueueSendFromISR → CommTask 处理',
-            'note': '使用 HAL_UART_Receive_IT 触发中断回调',
-        })
-    if 'tim_basic' in detected_peripherals or 'tim_pwm' in detected_peripherals:
-        interrupt_plan.append({
-            'irq': 'TIMx_IRQHandler',
-            'strategy': '定时器中断回调 → 设置标志或通知任务',
-            'note': '周期性采样可用 vTaskDelayUntil 替代定时器中断',
-        })
+    if "exti" in detected_peripherals or "中断" in desc_lower:
+        interrupt_plan.append(
+            {
+                "irq": "EXTIx_IRQHandler",
+                "strategy": "vTaskNotifyGiveFromISR → 唤醒处理任务",
+                "note": "ISR 中仅做通知，数据处理在任务中完成",
+            }
+        )
+    if "uart" in detected_peripherals:
+        interrupt_plan.append(
+            {
+                "irq": "USARTx_IRQHandler",
+                "strategy": "接收中断 → xQueueSendFromISR → CommTask 处理",
+                "note": "使用 HAL_UART_Receive_IT 触发中断回调",
+            }
+        )
+    if "tim_basic" in detected_peripherals or "tim_pwm" in detected_peripherals:
+        interrupt_plan.append(
+            {
+                "irq": "TIMx_IRQHandler",
+                "strategy": "定时器中断回调 → 设置标志或通知任务",
+                "note": "周期性采样可用 vTaskDelayUntil 替代定时器中断",
+            }
+        )
 
     # ── 通信拓扑推荐 ──────────────────────────────────────
     comm_topology = []
-    task_names = [t['name'] for t in planned_tasks]
+    task_names = [t["name"] for t in planned_tasks]
 
-    if 'SensorTask' in task_names and 'DisplayTask' in task_names:
-        comm_topology.append({
-            'from': 'SensorTask', 'to': 'DisplayTask',
-            'mechanism': 'xQueueSend/xQueueReceive',
-            'data': '传感器数据结构体',
-        })
-    if 'SensorTask' in task_names and 'ControlTask' in task_names:
-        comm_topology.append({
-            'from': 'SensorTask', 'to': 'ControlTask',
-            'mechanism': 'xQueueSend/xQueueReceive',
-            'data': '传感器原始值',
-        })
-    if 'SensorTask' in task_names and 'AlarmTask' in task_names:
-        comm_topology.append({
-            'from': 'SensorTask', 'to': 'AlarmTask',
-            'mechanism': 'xTaskNotifyGive（阈值触发时通知）',
-            'data': '无（AlarmTask 自行读取共享数据）',
-        })
-    if 'ButtonTask' in task_names:
+    if "SensorTask" in task_names and "DisplayTask" in task_names:
+        comm_topology.append(
+            {
+                "from": "SensorTask",
+                "to": "DisplayTask",
+                "mechanism": "xQueueSend/xQueueReceive",
+                "data": "传感器数据结构体",
+            }
+        )
+    if "SensorTask" in task_names and "ControlTask" in task_names:
+        comm_topology.append(
+            {
+                "from": "SensorTask",
+                "to": "ControlTask",
+                "mechanism": "xQueueSend/xQueueReceive",
+                "data": "传感器原始值",
+            }
+        )
+    if "SensorTask" in task_names and "AlarmTask" in task_names:
+        comm_topology.append(
+            {
+                "from": "SensorTask",
+                "to": "AlarmTask",
+                "mechanism": "xTaskNotifyGive（阈值触发时通知）",
+                "data": "无（AlarmTask 自行读取共享数据）",
+            }
+        )
+    if "ButtonTask" in task_names:
         for t in task_names:
-            if t != 'ButtonTask' and t != 'LEDTask':
-                comm_topology.append({
-                    'from': 'ButtonTask', 'to': t,
-                    'mechanism': 'xEventGroupSetBits',
-                    'data': '按键事件位',
-                })
+            if t != "ButtonTask" and t != "LEDTask":
+                comm_topology.append(
+                    {
+                        "from": "ButtonTask",
+                        "to": t,
+                        "mechanism": "xEventGroupSetBits",
+                        "data": "按键事件位",
+                    }
+                )
                 break  # 只连接一个示例
 
-    if 'CommTask' in task_names:
-        data_sources = [t for t in task_names if t in ('SensorTask', 'ControlTask', 'LogTask')]
+    if "CommTask" in task_names:
+        data_sources = [t for t in task_names if t in ("SensorTask", "ControlTask", "LogTask")]
         for src in data_sources[:1]:
-            comm_topology.append({
-                'from': src, 'to': 'CommTask',
-                'mechanism': 'xQueueSend',
-                'data': '待发送的数据包',
-            })
+            comm_topology.append(
+                {
+                    "from": src,
+                    "to": "CommTask",
+                    "mechanism": "xQueueSend",
+                    "data": "待发送的数据包",
+                }
+            )
 
     # ── 资源估算 ──────────────────────────────────────────
-    total_stack_bytes = sum(t.get('stack', 128) * 4 for t in planned_tasks)
+    total_stack_bytes = sum(t.get("stack", 128) * 4 for t in planned_tasks)
     tcb_overhead = len(planned_tasks) * 92
-    idle_timer_overhead = 92 + 256*4 + 92 + 512*4  # Idle + Timer 任务
+    idle_timer_overhead = 92 + 256 * 4 + 92 + 512 * 4  # Idle + Timer 任务
     queue_overhead = len(comm_topology) * 120  # 每个队列约 120B
-    recommended_heap = int((total_stack_bytes + tcb_overhead + idle_timer_overhead +
-                            queue_overhead) * 1.3)
+    recommended_heap = int(
+        (total_stack_bytes + tcb_overhead + idle_timer_overhead + queue_overhead) * 1.3
+    )
     recommended_heap = ((recommended_heap + 255) // 256) * 256
 
     total_ram_est = recommended_heap + 4096  # heap + static
     ram_pct = total_ram_est * 100 // (ram_k * 1024)
 
     resource_check = {
-        'total_tasks': len(planned_tasks) + 2,  # +Idle +Timer
-        'total_stack_bytes': total_stack_bytes,
-        'recommended_heap': recommended_heap,
-        'estimated_ram_usage': total_ram_est,
-        'ram_percent': ram_pct,
-        'flash_k': flash_k,
-        'ram_k': ram_k,
+        "total_tasks": len(planned_tasks) + 2,  # +Idle +Timer
+        "total_stack_bytes": total_stack_bytes,
+        "recommended_heap": recommended_heap,
+        "estimated_ram_usage": total_ram_est,
+        "ram_percent": ram_pct,
+        "flash_k": flash_k,
+        "ram_k": ram_k,
     }
 
     warnings = []
     if ram_pct > 85:
-        warnings.append(f"⚠ RAM 使用率预估 {ram_pct}%（{total_ram_est}B / {ram_k*1024}B），考虑减少任务数或栈大小")
+        warnings.append(
+            f"⚠ RAM 使用率预估 {ram_pct}%（{total_ram_est}B / {ram_k*1024}B），考虑减少任务数或栈大小"
+        )
     if ram_k < 16 and len(planned_tasks) > 2:
         warnings.append(f"⚠ RAM 仅 {ram_k}KB，{len(planned_tasks)} 个任务可能不够用")
     if not has_fpu and uses_float:
@@ -3665,12 +3918,14 @@ def stm32_rtos_plan_project(description: str, peripherals: list = None,
 
     plan_text += "━━━ 任务规划 ━━━\n"
     for i, t in enumerate(planned_tasks, 1):
-        plan_text += (f"  {i}. {t['name']} (优先级={t.get('priority',2)}, "
-                      f"栈={t.get('stack',128)}words)\n"
-                      f"     职责: {t.get('purpose','')}\n")
-        if 'comm_in' in t:
+        plan_text += (
+            f"  {i}. {t['name']} (优先级={t.get('priority',2)}, "
+            f"栈={t.get('stack',128)}words)\n"
+            f"     职责: {t.get('purpose','')}\n"
+        )
+        if "comm_in" in t:
             plan_text += f"     输入: {t['comm_in']}\n"
-        if 'comm_out' in t:
+        if "comm_out" in t:
             plan_text += f"     输出: {t['comm_out']}\n"
     plan_text += f"  + Idle任务 + Timer任务 (系统自动创建)\n\n"
 
@@ -3684,7 +3939,7 @@ def stm32_rtos_plan_project(description: str, peripherals: list = None,
         plan_text += "━━━ 中断策略 ━━━\n"
         for ip in interrupt_plan:
             plan_text += f"  {ip['irq']}: {ip['strategy']}\n"
-            if ip.get('note'):
+            if ip.get("note"):
                 plan_text += f"    💡 {ip['note']}\n"
         plan_text += "\n"
 
@@ -3801,7 +4056,9 @@ def stm32_auto_flash_cycle(code: str, request: str = "") -> dict:
     steps.append({"step": "compile", "success": comp["success"], "msg": comp["message"][:300]})
     if not comp["success"]:
         return {
-            "success": False, "attempt": attempt, "remaining": remaining,
+            "success": False,
+            "attempt": attempt,
+            "remaining": remaining,
             "give_up": attempt >= MAX_DEBUG_ATTEMPTS,
             "steps": steps,
             "error": "编译失败，请根据错误信息修改代码",
@@ -3814,7 +4071,9 @@ def stm32_auto_flash_cycle(code: str, request: str = "") -> dict:
         if not fr["success"]:
             for retry in range(2):
                 wait_sec = 1.5 * (retry + 1)
-                CONSOLE.print(f"[yellow]  烧录失败（{fr['message'][:60]}），{wait_sec:.0f}s 后重连重试...[/]")
+                CONSOLE.print(
+                    f"[yellow]  烧录失败（{fr['message'][:60]}），{wait_sec:.0f}s 后重连重试...[/]"
+                )
                 time.sleep(wait_sec)
                 stm32_connect(_current_chip)
                 fr = stm32_flash(comp["bin_path"])
@@ -3823,9 +4082,12 @@ def stm32_auto_flash_cycle(code: str, request: str = "") -> dict:
         steps.append({"step": "flash", "success": fr["success"], "msg": fr["message"]})
         if not fr["success"]:
             return {
-                "success": False, "attempt": attempt, "remaining": remaining,
+                "success": False,
+                "attempt": attempt,
+                "remaining": remaining,
                 "give_up": attempt >= MAX_DEBUG_ATTEMPTS,
-                "steps": steps, "error": f"烧录失败（重试2次后仍失败）: {fr['message']}",
+                "steps": steps,
+                "error": f"烧录失败（重试2次后仍失败）: {fr['message']}",
             }
         # 3. 串口监控
         uart_out = ""
@@ -3840,15 +4102,24 @@ def stm32_auto_flash_cycle(code: str, request: str = "") -> dict:
             )
             boot_ok = "Gary:BOOT" in uart_out
             # 检测传感器错误关键词
-            sensor_errors = [line.strip() for line in uart_out.splitlines()
-                             if "ERR:" in line or "Error" in line or "not found" in line.lower()]
+            sensor_errors = [
+                line.strip()
+                for line in uart_out.splitlines()
+                if "ERR:" in line or "Error" in line or "not found" in line.lower()
+            ]
             # 打印串口输出到终端供用户查看
             if uart_out.strip():
                 CONSOLE.print(f"[dim]  串口输出:[/]\n[cyan]{uart_out.strip()[:400]}[/]")
             else:
                 CONSOLE.print("[yellow]  串口无输出（程序未启动或卡死）[/]")
-            steps.append({"step": "uart", "output": uart_out[:500], "boot_ok": boot_ok,
-                          "sensor_errors": sensor_errors})
+            steps.append(
+                {
+                    "step": "uart",
+                    "output": uart_out[:500],
+                    "boot_ok": boot_ok,
+                    "sensor_errors": sensor_errors,
+                }
+            )
         else:
             time.sleep(POST_FLASH_DELAY + 1.0)
             boot_ok = True  # 无串口跳过验证
@@ -3857,14 +4128,32 @@ def stm32_auto_flash_cycle(code: str, request: str = "") -> dict:
         regs = _get_bridge().read_all_for_debug()
         has_fault = False
         if regs:
-            KEY_SET = ("SCB_CFSR", "PC", "RCC_APB2ENR", "RCC_APB1ENR",
-                       "GPIOA_CRL", "GPIOA_CRH", "GPIOA_ODR", "GPIOA_IDR",
-                       "GPIOB_CRL", "GPIOB_CRH", "GPIOB_ODR", "GPIOB_IDR",
-                       "GPIOC_CRL", "GPIOC_CRH", "GPIOC_ODR", "GPIOC_IDR",
-                       "GPIOA_MODER", "GPIOB_MODER", "GPIOC_MODER",
-                       "TIM2_CR1",
-                       "I2C1_CR1", "I2C1_SR1",
-                       "I2C2_CR1", "I2C2_SR1")
+            KEY_SET = (
+                "SCB_CFSR",
+                "PC",
+                "RCC_APB2ENR",
+                "RCC_APB1ENR",
+                "GPIOA_CRL",
+                "GPIOA_CRH",
+                "GPIOA_ODR",
+                "GPIOA_IDR",
+                "GPIOB_CRL",
+                "GPIOB_CRH",
+                "GPIOB_ODR",
+                "GPIOB_IDR",
+                "GPIOC_CRL",
+                "GPIOC_CRH",
+                "GPIOC_ODR",
+                "GPIOC_IDR",
+                "GPIOA_MODER",
+                "GPIOB_MODER",
+                "GPIOC_MODER",
+                "TIM2_CR1",
+                "I2C1_CR1",
+                "I2C1_SR1",
+                "I2C2_CR1",
+                "I2C2_SR1",
+            )
             key_regs = {k: v for k, v in regs.items() if k in KEY_SET}
             has_fault = regs.get("SCB_CFSR", "0x00000000") not in ("0x00000000", "0x0")
             # 打印寄存器到终端
@@ -3872,11 +4161,14 @@ def stm32_auto_flash_cycle(code: str, request: str = "") -> dict:
             for k, v in key_regs.items():
                 color = "red" if (k == "SCB_CFSR" and has_fault) else "dim"
                 CONSOLE.print(f"[{color}]    {k} = {v}[/]")
-            steps.append({
-                "step": "registers", "key_regs": key_regs,
-                "has_hardfault": has_fault,
-                "fault_analysis": _get_bridge().analyze_fault(regs) if has_fault else "",
-            })
+            steps.append(
+                {
+                    "step": "registers",
+                    "key_regs": key_regs,
+                    "has_hardfault": has_fault,
+                    "fault_analysis": _get_bridge().analyze_fault(regs) if has_fault else "",
+                }
+            )
         else:
             CONSOLE.print("[yellow]  寄存器读取失败（探针连接问题）[/]")
 
@@ -3915,13 +4207,17 @@ def stm32_auto_flash_cycle(code: str, request: str = "") -> dict:
                 steps=steps,
             )
             return {
-                "success": True, "attempt": attempt,
-                "steps": steps, "bin_size": comp.get("bin_size", 0),
+                "success": True,
+                "attempt": attempt,
+                "steps": steps,
+                "bin_size": comp.get("bin_size", 0),
             }
         elif hw_missing:
             # 硬件缺失 → 代码没问题，不要再修代码了，直接告知用户
             return {
-                "success": False, "attempt": attempt, "remaining": remaining,
+                "success": False,
+                "attempt": attempt,
+                "remaining": remaining,
                 "give_up": True,
                 "hw_missing": hw_missing,
                 "steps": steps,
@@ -3938,7 +4234,9 @@ def stm32_auto_flash_cycle(code: str, request: str = "") -> dict:
             elif not boot_ok and uart_out.strip():
                 err_msg = f"程序有输出但未打印 Gary: 启动标志，串口内容: {uart_out.strip()[:200]}"
             return {
-                "success": False, "attempt": attempt, "remaining": remaining,
+                "success": False,
+                "attempt": attempt,
+                "remaining": remaining,
                 "give_up": attempt >= MAX_DEBUG_ATTEMPTS,
                 "steps": steps,
                 "error": err_msg,
@@ -3948,7 +4246,8 @@ def stm32_auto_flash_cycle(code: str, request: str = "") -> dict:
     if request:
         _stm32_save_project(code, comp, request)
     return {
-        "success": True, "attempt": attempt,
+        "success": True,
+        "attempt": attempt,
         "steps": steps,
         "note": "硬件未连接，已完成编译",
         "bin_size": comp.get("bin_size", 0),
@@ -3973,11 +4272,18 @@ def _stm32_save_project(code: str, comp: dict, request: str) -> Path:
     (d / "main.c").write_text(code, encoding="utf-8")
     if comp.get("bin_path") and Path(comp["bin_path"]).exists():
         shutil.copy2(comp["bin_path"], d / "firmware.bin")
-    (d / "config.json").write_text(json.dumps({
-        "chip": _current_chip, "request": request,
-        "bin_size": comp.get("bin_size", 0),
-        "timestamp": ts,
-    }, ensure_ascii=False, indent=2))
+    (d / "config.json").write_text(
+        json.dumps(
+            {
+                "chip": _current_chip,
+                "request": request,
+                "bin_size": comp.get("bin_size", 0),
+                "timestamp": ts,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     _last_code = code
     # 同步更新 latest_workspace，保证 stm32_recompile 始终能找到最新代码
     try:
@@ -4000,12 +4306,14 @@ def stm32_list_projects() -> dict:
         if cf.exists():
             try:
                 c = json.loads(cf.read_text(encoding="utf-8"))
-                projects.append({
-                    "name": p.name,
-                    "chip": c.get("chip", "?"),
-                    "request": c.get("request", ""),
-                    "timestamp": c.get("timestamp", ""),
-                })
+                projects.append(
+                    {
+                        "name": p.name,
+                        "chip": c.get("chip", "?"),
+                        "request": c.get("request", ""),
+                        "timestamp": c.get("timestamp", ""),
+                    }
+                )
             except Exception:
                 pass
     return {"success": True, "projects": projects}
@@ -4024,6 +4332,7 @@ def stm32_read_project(project_name: str) -> dict:
 # 通用文件/命令工具（来自 claude_terminal，简化版）
 # ─────────────────────────────────────────────────────────────
 
+
 def read_file(file_path: str) -> dict:
     try:
         p = Path(file_path).expanduser().resolve()
@@ -4033,8 +4342,10 @@ def read_file(file_path: str) -> dict:
         lines = content.splitlines()
         numbered = "\n".join(f"{i+1:4d} | {l}" for i, l in enumerate(lines[:800]))
         return {
-            "success": True, "numbered_view": numbered,
-            "raw_content": content[:40000], "total_lines": len(lines),
+            "success": True,
+            "numbered_view": numbered,
+            "raw_content": content[:40000],
+            "total_lines": len(lines),
         }
     except Exception as e:
         return {"error": str(e)}
@@ -4072,7 +4383,11 @@ def list_directory(path: str = ".") -> dict:
     try:
         p = Path(path).expanduser().resolve()
         items = [{"name": x.name, "type": "dir" if x.is_dir() else "file"} for x in p.iterdir()]
-        return {"success": True, "path": str(p), "items": sorted(items, key=lambda x: (x["type"], x["name"]))}
+        return {
+            "success": True,
+            "path": str(p),
+            "items": sorted(items, key=lambda x: (x["type"], x["name"])),
+        }
     except Exception as e:
         return {"error": str(e)}
 
@@ -4115,8 +4430,10 @@ def search_files(query: str, path: str = ".", file_type: str = None) -> dict:
 def web_search(query: str) -> dict:
     try:
         import requests
-        r = requests.get("http://127.0.0.1:8080/search",
-                         params={"q": query, "format": "json"}, timeout=8)
+
+        r = requests.get(
+            "http://127.0.0.1:8080/search", params={"q": query, "format": "json"}, timeout=8
+        )
         data = r.json()
         results = [
             {"title": x.get("title"), "url": x.get("url"), "snippet": x.get("content", "")[:200]}
@@ -4131,32 +4448,35 @@ def web_search(query: str) -> dict:
 # 扩展工具（来自 claude_terminal / tool_schemas）
 # ─────────────────────────────────────────────────────────────
 
+
 def append_file_content(file_path: str, content: str) -> dict:
     """向文件末尾追加内容"""
     try:
         p = Path(file_path).expanduser().resolve()
-        mode = 'a' if p.exists() else 'w'
+        mode = "a" if p.exists() else "w"
         prefix = ""
-        if mode == 'a' and p.stat().st_size > 0:
-            with open(p, 'rb') as f:
+        if mode == "a" and p.stat().st_size > 0:
+            with open(p, "rb") as f:
                 f.seek(-1, 2)
-                if f.read(1) != b'\n':
+                if f.read(1) != b"\n":
                     prefix = "\n"
-        with open(p, mode, encoding='utf-8') as f:
+        with open(p, mode, encoding="utf-8") as f:
             f.write(prefix + content)
         return {"success": True, "path": str(p), "message": "内容已追加"}
     except Exception as e:
         return {"error": str(e)}
 
 
-def grep_search(pattern: str, path: str = ".", include_extension: str = None, recursive: bool = True) -> dict:
+def grep_search(
+    pattern: str, path: str = ".", include_extension: str = None, recursive: bool = True
+) -> dict:
     """使用正则搜索文件内容（递归）"""
     try:
         search_path = Path(path).expanduser().resolve()
         results = []
         count = 0
         max_results = 20
-        glob_pattern = '**/*' if recursive else '*'
+        glob_pattern = "**/*" if recursive else "*"
         for fp in search_path.glob(glob_pattern):
             if not fp.is_file():
                 continue
@@ -4165,26 +4485,32 @@ def grep_search(pattern: str, path: str = ".", include_extension: str = None, re
             if fp.stat().st_size > 1024 * 1024:
                 continue
             try:
-                with open(fp, 'r', encoding='utf-8', errors='ignore') as f:
+                with open(fp, "r", encoding="utf-8", errors="ignore") as f:
                     file_content = f.read()
                 matches = list(re.finditer(pattern, file_content, re.MULTILINE))
                 if matches:
                     file_matches = []
                     for m in matches[:5]:
-                        line_num = file_content.count('\n', 0, m.start()) + 1
-                        line_start = file_content.rfind('\n', 0, m.start()) + 1
-                        line_end = file_content.find('\n', m.end())
+                        line_num = file_content.count("\n", 0, m.start()) + 1
+                        line_start = file_content.rfind("\n", 0, m.start()) + 1
+                        line_end = file_content.find("\n", m.end())
                         if line_end == -1:
                             line_end = len(file_content)
                         line_content = file_content[line_start:line_end].strip()
                         file_matches.append(f"Line {line_num}: {line_content[:100]}")
-                    results.append(f"File: {fp.relative_to(search_path)}\n" + "\n".join(file_matches))
+                    results.append(
+                        f"File: {fp.relative_to(search_path)}\n" + "\n".join(file_matches)
+                    )
                     count += 1
                     if count >= max_results:
                         break
             except Exception:
                 continue
-        return {"success": True, "matches_found": count, "results": "\n\n".join(results) if results else "No matches found"}
+        return {
+            "success": True,
+            "matches_found": count,
+            "results": "\n\n".join(results) if results else "No matches found",
+        }
     except Exception as e:
         return {"error": str(e)}
 
@@ -4207,20 +4533,21 @@ def fetch_url(url: str) -> dict:
     """抓取 URL 页面并返回纯文本内容"""
     try:
         import requests
+
         try:
             from bs4 import BeautifulSoup
         except ImportError:
             return {"error": "beautifulsoup4 未安装: pip install beautifulsoup4"}
-        headers = {'User-Agent': 'Mozilla/5.0 (compatible; STM32Agent/1.0)'}
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; STM32Agent/1.0)"}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
+        soup = BeautifulSoup(response.content, "html.parser")
         for tag in soup(["script", "style"]):
             tag.decompose()
         text = soup.get_text()
         lines = (line.strip() for line in text.splitlines())
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        text = '\n'.join(chunk for chunk in chunks if chunk)
+        text = "\n".join(chunk for chunk in chunks if chunk)
         return {"success": True, "url": url, "content": text[:5000], "truncated": len(text) > 5000}
     except Exception as e:
         return {"error": f"获取失败: {e}"}
@@ -4265,14 +4592,15 @@ def git_commit(message: str) -> dict:
     return execute_command(f"git commit -m {shlex.quote(message)}")
 
 
-def edit_file_lines(file_path: str, operation: str, start_line: int,
-                    end_line: int = None, new_content: str = None) -> dict:
+def edit_file_lines(
+    file_path: str, operation: str, start_line: int, end_line: int = None, new_content: str = None
+) -> dict:
     """基于行号编辑文件（replace/insert/delete）"""
     try:
         p = Path(file_path).expanduser().resolve()
         if not p.exists():
             return {"error": f"文件不存在: {file_path}"}
-        with open(p, 'r', encoding='utf-8', errors='ignore') as f:
+        with open(p, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
         total = len(lines)
         if start_line < 1 or start_line > total:
@@ -4285,22 +4613,27 @@ def edit_file_lines(file_path: str, operation: str, start_line: int,
         if operation == "replace":
             if new_content is None:
                 return {"error": "replace 需要 new_content"}
-            if not new_content.endswith('\n'):
-                new_content += '\n'
+            if not new_content.endswith("\n"):
+                new_content += "\n"
             new_lines = lines[:si] + new_content.splitlines(keepends=True) + lines[ei:]
         elif operation == "insert":
             if new_content is None:
                 return {"error": "insert 需要 new_content"}
-            if not new_content.endswith('\n'):
-                new_content += '\n'
+            if not new_content.endswith("\n"):
+                new_content += "\n"
             new_lines = lines[:si] + new_content.splitlines(keepends=True) + lines[si:]
         elif operation == "delete":
             new_lines = lines[:si] + lines[ei:]
         else:
             return {"error": f"未知操作: {operation}"}
-        with open(p, 'w', encoding='utf-8') as f:
+        with open(p, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
-        return {"success": True, "path": str(p), "operation": operation, "new_total_lines": len(new_lines)}
+        return {
+            "success": True,
+            "path": str(p),
+            "operation": operation,
+            "new_total_lines": len(new_lines),
+        }
     except Exception as e:
         return {"error": str(e)}
 
@@ -4311,15 +4644,20 @@ def insert_content_by_regex(file_path: str, regex_pattern: str, content: str) ->
         p = Path(file_path).expanduser().resolve()
         if not p.exists():
             return {"error": f"文件不存在: {file_path}"}
-        with open(p, 'r', encoding='utf-8', errors='ignore') as f:
+        with open(p, "r", encoding="utf-8", errors="ignore") as f:
             file_content = f.read()
         m = re.search(regex_pattern, file_content, re.MULTILINE)
         if not m:
             return {"error": f"正则 '{regex_pattern}' 未匹配到内容"}
-        new_content = file_content[:m.end()] + content + file_content[m.end():]
-        with open(p, 'w', encoding='utf-8') as f:
+        new_content = file_content[: m.end()] + content + file_content[m.end() :]
+        with open(p, "w", encoding="utf-8") as f:
             f.write(new_content)
-        return {"success": True, "path": str(p), "match_found": m.group(0)[:50], "message": "内容已插入"}
+        return {
+            "success": True,
+            "path": str(p),
+            "match_found": m.group(0)[:50],
+            "message": "内容已插入",
+        }
     except Exception as e:
         return {"error": str(e)}
 
@@ -4327,26 +4665,39 @@ def insert_content_by_regex(file_path: str, regex_pattern: str, content: str) ->
 def check_python_code(file_path: str) -> dict:
     """检查 Python 文件语法和风格（flake8 / ast）"""
     import ast
+
     try:
         p = Path(file_path).expanduser().resolve()
         if not p.exists():
             return {"error": f"文件不存在: {file_path}"}
         try:
-            with open(p, 'r', encoding='utf-8') as f:
+            with open(p, "r", encoding="utf-8") as f:
                 ast.parse(f.read())
         except SyntaxError as e:
-            return {"success": False, "error_type": "SyntaxError", "line": e.lineno, "message": str(e)}
+            return {
+                "success": False,
+                "error_type": "SyntaxError",
+                "line": e.lineno,
+                "message": str(e),
+            }
         lint_result = ""
         try:
             result = subprocess.run(
-                f"flake8 {shlex.quote(str(p))}", shell=True,
-                capture_output=True, text=True, timeout=10
+                f"flake8 {shlex.quote(str(p))}",
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if result.returncode != 0 and result.stdout:
                 lint_result = f"Flake8:\n{result.stdout}"
         except Exception:
             pass
-        return {"success": True, "message": "语法检查通过", "linter_output": lint_result or "无问题"}
+        return {
+            "success": True,
+            "message": "语法检查通过",
+            "linter_output": lint_result or "无问题",
+        }
     except Exception as e:
         return {"error": str(e)}
 
@@ -4354,8 +4705,11 @@ def check_python_code(file_path: str) -> dict:
 def run_python_code(code: str) -> dict:
     """执行 Python 代码片段（临时文件沙箱）"""
     import tempfile
+
     try:
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as tmp:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as tmp:
             tmp.write(code)
             tmp_path = tmp.name
         result = subprocess.run(
@@ -4377,10 +4731,12 @@ def run_python_code(code: str) -> dict:
 
 # ── Word 文档工具 ──────────────────────────────────────────────
 
+
 def _get_docx_module():
     """懒加载 python-docx，未安装时返回 None"""
     try:
         import docx
+
         return docx
     except ImportError:
         return None
@@ -4393,13 +4749,15 @@ def read_docx(file_path: str) -> dict:
         return {"error": "python-docx 未安装: pip install python-docx"}
     try:
         doc = docx_mod.Document(file_path)
-        text = '\n'.join(p.text for p in doc.paragraphs)
+        text = "\n".join(p.text for p in doc.paragraphs)
         return {"success": True, "content": text, "total_paragraphs": len(doc.paragraphs)}
     except Exception as e:
         return {"error": str(e)}
 
 
-def replace_docx_text(file_path: str, old_text: str, new_text: str, use_regex: bool = False) -> dict:
+def replace_docx_text(
+    file_path: str, old_text: str, new_text: str, use_regex: bool = False
+) -> dict:
     """替换 Word 文档中的文本（支持正则）"""
     docx_mod = _get_docx_module()
     if docx_mod is None:
@@ -4435,15 +4793,16 @@ def replace_docx_text(file_path: str, old_text: str, new_text: str, use_regex: b
         return {"error": str(e)}
 
 
-def append_docx_content(file_path: str, content: str,
-                        after_paragraph_index: int = None, style: str = None) -> dict:
+def append_docx_content(
+    file_path: str, content: str, after_paragraph_index: int = None, style: str = None
+) -> dict:
     """向 Word 文档追加内容（支持指定位置插入）"""
     docx_mod = _get_docx_module()
     if docx_mod is None:
         return {"error": "python-docx 未安装: pip install python-docx"}
     try:
         doc = docx_mod.Document(file_path)
-        paragraphs_text = [t for t in content.split('\n') if t.strip()]
+        paragraphs_text = [t for t in content.split("\n") if t.strip()]
         if after_paragraph_index is None:
             for p_text in paragraphs_text:
                 p = doc.add_paragraph(p_text)
@@ -4495,13 +4854,18 @@ def inspect_docx_structure(file_path: str, max_paragraphs: int = 50) -> dict:
             if not preview.strip():
                 preview = "[空段落]"
             structure.append(f"[{i}] {preview}")
-        return {"success": True, "total_paragraphs": len(doc.paragraphs), "structure": "\n".join(structure)}
+        return {
+            "success": True,
+            "total_paragraphs": len(doc.paragraphs),
+            "structure": "\n".join(structure),
+        }
     except Exception as e:
         return {"error": str(e)}
 
 
-def insert_docx_content_after_heading(file_path: str, heading_text: str,
-                                      content: str, style: str = None) -> dict:
+def insert_docx_content_after_heading(
+    file_path: str, heading_text: str, content: str, style: str = None
+) -> dict:
     """在 Word 文档指定标题后插入内容（大小写不敏感）"""
     docx_mod = _get_docx_module()
     if docx_mod is None:
@@ -4523,10 +4887,12 @@ def insert_docx_content_after_heading(file_path: str, heading_text: str,
 
 # ── 电脑控制工具 ──────────────────────────────────────────────
 
+
 def computer_screenshot() -> dict:
     """截取当前桌面截图并保存为 PNG"""
     try:
         import pyautogui
+
         ts = int(time.time())
         path = os.path.abspath(f"screenshot_{ts}.png")
         pyautogui.screenshot(path)
@@ -4541,6 +4907,7 @@ def computer_mouse_move(x: int, y: int) -> dict:
     """移动鼠标到指定坐标"""
     try:
         import pyautogui
+
         pyautogui.moveTo(x, y)
         return {"success": True, "action": "move", "x": x, "y": y}
     except ImportError:
@@ -4553,6 +4920,7 @@ def computer_mouse_click(button: str = "left") -> dict:
     """鼠标点击（left/right/double）"""
     try:
         import pyautogui
+
         if button == "double":
             pyautogui.doubleClick()
         else:
@@ -4568,6 +4936,7 @@ def computer_keyboard_type(text: str) -> dict:
     """向焦点窗口输入文本"""
     try:
         import pyautogui
+
         pyautogui.write(text)
         return {"success": True, "typed": text}
     except ImportError:
@@ -4581,65 +4950,65 @@ def computer_keyboard_type(text: str) -> dict:
 # ─────────────────────────────────────────────────────────────
 TOOLS_MAP: Dict[str, Any] = {
     # STM32 专属
-    "stm32_list_probes":     stm32_list_probes,
-    "stm32_connect":          stm32_connect,
-    "stm32_disconnect":       stm32_disconnect,
-    "stm32_serial_connect":   stm32_serial_connect,
+    "stm32_list_probes": stm32_list_probes,
+    "stm32_connect": stm32_connect,
+    "stm32_disconnect": stm32_disconnect,
+    "stm32_serial_connect": stm32_serial_connect,
     "stm32_serial_disconnect": stm32_serial_disconnect,
-    "stm32_set_chip":         stm32_set_chip,
-    "stm32_hardware_status":  stm32_hardware_status,
-    "stm32_compile":          stm32_compile,
-    "stm32_compile_rtos":     stm32_compile_rtos,
-    "stm32_recompile":        stm32_recompile,
-    "stm32_regen_bsp":        stm32_regen_bsp,
+    "stm32_set_chip": stm32_set_chip,
+    "stm32_hardware_status": stm32_hardware_status,
+    "stm32_compile": stm32_compile,
+    "stm32_compile_rtos": stm32_compile_rtos,
+    "stm32_recompile": stm32_recompile,
+    "stm32_regen_bsp": stm32_regen_bsp,
     "stm32_analyze_fault_rtos": stm32_analyze_fault_rtos,
-    "stm32_rtos_check_code":  stm32_rtos_check_code,
-    "stm32_rtos_task_stats":  stm32_rtos_task_stats,
+    "stm32_rtos_check_code": stm32_rtos_check_code,
+    "stm32_rtos_task_stats": stm32_rtos_task_stats,
     "stm32_rtos_suggest_config": stm32_rtos_suggest_config,
     "stm32_rtos_plan_project": stm32_rtos_plan_project,
-    "stm32_flash":            stm32_flash,
-    "stm32_read_registers":   stm32_read_registers,
-    "stm32_analyze_fault":    stm32_analyze_fault,
-    "stm32_serial_read":      stm32_serial_read,
+    "stm32_flash": stm32_flash,
+    "stm32_read_registers": stm32_read_registers,
+    "stm32_analyze_fault": stm32_analyze_fault,
+    "stm32_serial_read": stm32_serial_read,
     "stm32_auto_flash_cycle": stm32_auto_flash_cycle,
     "stm32_reset_debug_attempts": stm32_reset_debug_attempts,
-    "stm32_generate_font":    stm32_generate_font,
-    "stm32_save_code":        stm32_save_code,
-    "stm32_list_projects":    stm32_list_projects,
-    "stm32_read_project":     stm32_read_project,
+    "stm32_generate_font": stm32_generate_font,
+    "stm32_save_code": stm32_save_code,
+    "stm32_list_projects": stm32_list_projects,
+    "stm32_read_project": stm32_read_project,
     "gary_save_member_memory": gary_save_member_memory,
     # 通用
-    "read_file":              read_file,
+    "read_file": read_file,
     "create_or_overwrite_file": create_or_overwrite_file,
-    "str_replace_edit":       str_replace_edit,
-    "list_directory":         list_directory,
-    "execute_command":        execute_command,
-    "search_files":           search_files,
-    "web_search":             web_search,
+    "str_replace_edit": str_replace_edit,
+    "list_directory": list_directory,
+    "execute_command": execute_command,
+    "search_files": search_files,
+    "web_search": web_search,
     # 扩展通用工具
-    "append_file_content":    append_file_content,
-    "grep_search":            grep_search,
+    "append_file_content": append_file_content,
+    "grep_search": grep_search,
     "execute_batch_commands": execute_batch_commands,
-    "fetch_url":              fetch_url,
-    "get_current_time":       get_current_time,
-    "ask_human":              ask_human,
-    "git_status":             git_status,
-    "git_diff":               git_diff,
-    "git_commit":             git_commit,
-    "edit_file_lines":        edit_file_lines,
+    "fetch_url": fetch_url,
+    "get_current_time": get_current_time,
+    "ask_human": ask_human,
+    "git_status": git_status,
+    "git_diff": git_diff,
+    "git_commit": git_commit,
+    "edit_file_lines": edit_file_lines,
     "insert_content_by_regex": insert_content_by_regex,
-    "check_python_code":      check_python_code,
-    "run_python_code":        run_python_code,
+    "check_python_code": check_python_code,
+    "run_python_code": run_python_code,
     # Word 文档工具
-    "read_docx":              read_docx,
-    "replace_docx_text":      replace_docx_text,
-    "append_docx_content":    append_docx_content,
+    "read_docx": read_docx,
+    "replace_docx_text": replace_docx_text,
+    "append_docx_content": append_docx_content,
     "inspect_docx_structure": inspect_docx_structure,
     "insert_docx_content_after_heading": insert_docx_content_after_heading,
     # 电脑控制工具
-    "computer_screenshot":    computer_screenshot,
-    "computer_mouse_move":    computer_mouse_move,
-    "computer_mouse_click":   computer_mouse_click,
+    "computer_screenshot": computer_screenshot,
+    "computer_mouse_move": computer_mouse_move,
+    "computer_mouse_click": computer_mouse_click,
     "computer_keyboard_type": computer_keyboard_type,
 }
 TOOLS_MAP.update(EXTRA_TOOLS_MAP)
@@ -4665,7 +5034,10 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "chip": {"type": "string", "description": "芯片型号，如 STM32F103C8T6（可选，不填用当前设置）"},
+                    "chip": {
+                        "type": "string",
+                        "description": "芯片型号，如 STM32F103C8T6（可选，不填用当前设置）",
+                    },
                 },
                 "required": [],
             },
@@ -4691,10 +5063,11 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "port": {"type": "string",
-                             "description": "串口设备路径，如 /dev/ttyUSB0、/dev/ttyAMA0（不填用 config.py 默认值）"},
-                    "baud": {"type": "integer",
-                             "description": "波特率，默认 115200"},
+                    "port": {
+                        "type": "string",
+                        "description": "串口设备路径，如 /dev/ttyUSB0、/dev/ttyAMA0（不填用 config.py 默认值）",
+                    },
+                    "baud": {"type": "integer", "description": "波特率，默认 115200"},
                 },
                 "required": [],
             },
@@ -4716,7 +5089,10 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "chip": {"type": "string", "description": "芯片完整型号，如 STM32F103C8T6 / STM32F407VET6"},
+                    "chip": {
+                        "type": "string",
+                        "description": "芯片完整型号，如 STM32F103C8T6 / STM32F407VET6",
+                    },
                 },
                 "required": ["chip"],
             },
@@ -4738,7 +5114,10 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "code": {"type": "string", "description": "完整的 main.c 代码（含所有 #include 和函数定义）"},
+                    "code": {
+                        "type": "string",
+                        "description": "完整的 main.c 代码（含所有 #include 和函数定义）",
+                    },
                     "chip": {"type": "string", "description": "可选：临时指定芯片型号"},
                 },
                 "required": ["code"],
@@ -4750,11 +5129,14 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "stm32_compile_rtos",
             "description": "使用 arm-none-eabi-gcc + HAL + FreeRTOS Kernel 编译带 RTOS 的完整 main.c 代码。"
-                           "仅在用户需要 FreeRTOS 多任务时使用，裸机项目使用 stm32_compile。",
+            "仅在用户需要 FreeRTOS 多任务时使用，裸机项目使用 stm32_compile。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "code": {"type": "string", "description": "完整的 main.c 代码（含 FreeRTOS 头文件和任务定义）"},
+                    "code": {
+                        "type": "string",
+                        "description": "完整的 main.c 代码（含 FreeRTOS 头文件和任务定义）",
+                    },
                     "chip": {"type": "string", "description": "可选：临时指定芯片型号"},
                 },
                 "required": ["code"],
@@ -4795,7 +5177,10 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "chip": {"type": "string", "description": "可选：指定芯片型号（如 STM32F411CE）"},
+                    "chip": {
+                        "type": "string",
+                        "description": "可选：指定芯片型号（如 STM32F411CE）",
+                    },
                 },
                 "required": [],
             },
@@ -4855,10 +5240,22 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "task_count": {"type": "integer", "description": "计划创建的任务数量（不含 Idle 和 Timer）"},
-                    "use_fpu": {"type": "boolean", "description": "任务是否使用浮点运算（默认 false）"},
-                    "use_printf": {"type": "boolean", "description": "任务是否使用 snprintf（默认 false）"},
-                    "ram_k": {"type": "integer", "description": "可选：指定 RAM 大小(KB)，不填用当前芯片参数"},
+                    "task_count": {
+                        "type": "integer",
+                        "description": "计划创建的任务数量（不含 Idle 和 Timer）",
+                    },
+                    "use_fpu": {
+                        "type": "boolean",
+                        "description": "任务是否使用浮点运算（默认 false）",
+                    },
+                    "use_printf": {
+                        "type": "boolean",
+                        "description": "任务是否使用 snprintf（默认 false）",
+                    },
+                    "ram_k": {
+                        "type": "integer",
+                        "description": "可选：指定 RAM 大小(KB)，不填用当前芯片参数",
+                    },
                 },
                 "required": ["task_count"],
             },
@@ -4884,12 +5281,12 @@ TOOL_SCHEMAS = [
                     "peripherals": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "可选：明确指定的外设列表，如 [\"uart\", \"i2c\", \"adc\", \"pwm\"]",
+                        "description": '可选：明确指定的外设列表，如 ["uart", "i2c", "adc", "pwm"]',
                     },
                     "task_hints": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "可选：用户指定的任务名称提示，如 [\"SensorTask\", \"MotorTask\"]",
+                        "description": '可选：用户指定的任务名称提示，如 ["SensorTask", "MotorTask"]',
                     },
                 },
                 "required": ["description"],
@@ -4904,7 +5301,10 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "bin_path": {"type": "string", "description": "可选：bin 文件路径，不填则用上次编译结果"},
+                    "bin_path": {
+                        "type": "string",
+                        "description": "可选：bin 文件路径，不填则用上次编译结果",
+                    },
                 },
                 "required": [],
             },
@@ -4921,7 +5321,7 @@ TOOL_SCHEMAS = [
                     "regs": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "可选：指定寄存器名称列表，如 [\"RCC_APB2ENR\", \"GPIOA_CRL\"]。不填读取所有调试寄存器。",
+                        "description": '可选：指定寄存器名称列表，如 ["RCC_APB2ENR", "GPIOA_CRL"]。不填读取所有调试寄存器。',
                     },
                 },
                 "required": [],
@@ -4945,7 +5345,10 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "timeout": {"type": "number", "description": "读取超时（秒），默认 3.0"},
-                    "wait_for": {"type": "string", "description": "可选：等待直到出现此字符串（如 Gary:）"},
+                    "wait_for": {
+                        "type": "string",
+                        "description": "可选：等待直到出现此字符串（如 Gary:）",
+                    },
                 },
                 "required": [],
             },
@@ -4994,7 +5397,11 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "text": {"type": "string", "description": "要生成字模的文字，如 '你好世界'"},
-                    "size": {"type": "integer", "description": "字体大小（像素），默认 16，常用 8/12/16/24/32", "default": 16},
+                    "size": {
+                        "type": "integer",
+                        "description": "字体大小（像素），默认 16，常用 8/12/16/24/32",
+                        "default": 16,
+                    },
                 },
                 "required": ["text"],
             },
@@ -5031,7 +5438,10 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_name": {"type": "string", "description": "项目目录名（从 stm32_list_projects 获取）"},
+                    "project_name": {
+                        "type": "string",
+                        "description": "项目目录名（从 stm32_list_projects 获取）",
+                    },
                 },
                 "required": ["project_name"],
             },
@@ -5049,12 +5459,18 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string", "description": "经验标题，简短具体，如“F103 裸机 UART 先打 Gary:BOOT 再启 I2C”"},
-                    "experience": {"type": "string", "description": "经验正文，2-6 行为宜，写成可复用的做法/结论"},
+                    "title": {
+                        "type": "string",
+                        "description": "经验标题，简短具体，如“F103 裸机 UART 先打 Gary:BOOT 再启 I2C”",
+                    },
+                    "experience": {
+                        "type": "string",
+                        "description": "经验正文，2-6 行为宜，写成可复用的做法/结论",
+                    },
                     "tags": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "可选标签，如 [\"baremetal\", \"uart\", \"i2c\", \"boot_marker\"]",
+                        "description": '可选标签，如 ["baremetal", "uart", "i2c", "boot_marker"]',
                     },
                     "importance": {
                         "type": "string",
@@ -5103,7 +5519,10 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "file_path": {"type": "string"},
-                    "old_str": {"type": "string", "description": "要替换的原文（必须唯一，包含足够上下文）"},
+                    "old_str": {
+                        "type": "string",
+                        "description": "要替换的原文（必须唯一，包含足够上下文）",
+                    },
                     "new_str": {"type": "string", "description": "替换后的新文"},
                 },
                 "required": ["file_path", "old_str", "new_str"],
@@ -5208,7 +5627,10 @@ TOOL_SCHEMAS = [
                         "items": {"type": "string"},
                         "description": "命令列表",
                     },
-                    "stop_on_error": {"type": "boolean", "description": "遇错是否停止（默认 True）"},
+                    "stop_on_error": {
+                        "type": "boolean",
+                        "description": "遇错是否停止（默认 True）",
+                    },
                 },
                 "required": ["commands"],
             },
@@ -5299,8 +5721,14 @@ TOOL_SCHEMAS = [
                         "description": "操作类型",
                     },
                     "start_line": {"type": "integer", "description": "起始行（1-indexed）"},
-                    "end_line": {"type": "integer", "description": "结束行（可选，默认等于 start_line）"},
-                    "new_content": {"type": "string", "description": "新内容（replace/insert 时必填）"},
+                    "end_line": {
+                        "type": "integer",
+                        "description": "结束行（可选，默认等于 start_line）",
+                    },
+                    "new_content": {
+                        "type": "string",
+                        "description": "新内容（replace/insert 时必填）",
+                    },
                 },
                 "required": ["file_path", "operation", "start_line"],
             },
@@ -5315,7 +5743,10 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "file_path": {"type": "string", "description": "文件路径"},
-                    "regex_pattern": {"type": "string", "description": "用于定位插入点的正则表达式"},
+                    "regex_pattern": {
+                        "type": "string",
+                        "description": "用于定位插入点的正则表达式",
+                    },
                     "content": {"type": "string", "description": "要插入的内容"},
                 },
                 "required": ["file_path", "regex_pattern", "content"],
@@ -5376,7 +5807,10 @@ TOOL_SCHEMAS = [
                     "file_path": {"type": "string", "description": ".docx 文件路径"},
                     "old_text": {"type": "string", "description": "要查找的文本或正则模式"},
                     "new_text": {"type": "string", "description": "替换为的新文本"},
-                    "use_regex": {"type": "boolean", "description": "是否启用正则匹配（默认 False）"},
+                    "use_regex": {
+                        "type": "boolean",
+                        "description": "是否启用正则匹配（默认 False）",
+                    },
                 },
                 "required": ["file_path", "old_text", "new_text"],
             },
@@ -5392,8 +5826,14 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "file_path": {"type": "string", "description": ".docx 文件路径"},
                     "content": {"type": "string", "description": "要追加的内容（\\n 分隔多段落）"},
-                    "after_paragraph_index": {"type": "integer", "description": "插入位置段落索引（不填则追加到末尾）"},
-                    "style": {"type": "string", "description": "Word 样式名，如 'Heading 1'、'Normal'（可选）"},
+                    "after_paragraph_index": {
+                        "type": "integer",
+                        "description": "插入位置段落索引（不填则追加到末尾）",
+                    },
+                    "style": {
+                        "type": "string",
+                        "description": "Word 样式名，如 'Heading 1'、'Normal'（可选）",
+                    },
                 },
                 "required": ["file_path", "content"],
             },
@@ -5408,7 +5848,10 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "file_path": {"type": "string", "description": ".docx 文件路径"},
-                    "max_paragraphs": {"type": "integer", "description": "最多显示段落数（默认 50）"},
+                    "max_paragraphs": {
+                        "type": "integer",
+                        "description": "最多显示段落数（默认 50）",
+                    },
                 },
                 "required": ["file_path"],
             },
@@ -5423,7 +5866,10 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "file_path": {"type": "string", "description": ".docx 文件路径"},
-                    "heading_text": {"type": "string", "description": "目标标题文本（大小写不敏感）"},
+                    "heading_text": {
+                        "type": "string",
+                        "description": "目标标题文本（大小写不敏感）",
+                    },
                     "content": {"type": "string", "description": "要插入的内容"},
                     "style": {"type": "string", "description": "Word 样式（可选）"},
                 },
@@ -6099,6 +6545,7 @@ def _refresh_system_prompt_template() -> str:
 
 STM32_SYSTEM_PROMPT = build_system_prompt()
 
+
 # ─────────────────────────────────────────────────────────────
 # Gary doctor — 一键诊断所有配置
 # ─────────────────────────────────────────────────────────────
@@ -6120,6 +6567,7 @@ def run_doctor():
         # 尝试连接 AI 服务
         try:
             from openai import OpenAI as _OAI
+
             c = _OAI(api_key=cur_key, base_url=cur_url, timeout=8.0)
             c.models.list()
             CONSOLE.print("  [green]✓[/] API 连通性  [dim]测试通过[/]")
@@ -6150,11 +6598,14 @@ def run_doctor():
         CONSOLE.print(f"  [green]✓[/] arm-none-eabi-gcc  [dim]{ver}[/]")
     else:
         CONSOLE.print("  [red]✗[/] arm-none-eabi-gcc  未找到")
-        CONSOLE.print("    [dim]→ sudo apt install gcc-arm-none-eabi  或  python3 setup.py --auto[/]")
+        CONSOLE.print(
+            "    [dim]→ sudo apt install gcc-arm-none-eabi  或  python3 setup.py --auto[/]"
+        )
         all_ok = False
 
     # HAL
     from config import WORKSPACE as _WS
+
     hal_dir = _WS / "hal"
     hal_found = []
     for fam in ("f0", "f1", "f3", "f4"):
@@ -6175,8 +6626,13 @@ def run_doctor():
 
     # ── 3. Python 依赖 ───────────────────────────────────────
     CONSOLE.print("[bold]■ Python 依赖[/]")
-    _required = [("openai","openai"),("rich","rich"),("prompt_toolkit","prompt_toolkit")]
-    _optional = [("serial","pyserial"),("pyocd","pyocd"),("docx","python-docx"),("PIL","Pillow")]
+    _required = [("openai", "openai"), ("rich", "rich"), ("prompt_toolkit", "prompt_toolkit")]
+    _optional = [
+        ("serial", "pyserial"),
+        ("pyocd", "pyocd"),
+        ("docx", "python-docx"),
+        ("PIL", "Pillow"),
+    ]
     for imp, pkg in _required:
         try:
             __import__(imp)
@@ -6196,6 +6652,7 @@ def run_doctor():
     CONSOLE.print("[bold]■ 硬件探针[/]")
     try:
         import pyocd.probe.usb_probe as _up
+
         probes = _up.USBProbe.get_all_connected_probes(unique_id=None, is_explicit=False)
         if probes:
             for p in probes:
@@ -6315,6 +6772,7 @@ def configure_ai_cli(agent: "STM32Agent | None" = None):
         # 重建当前会话的 AI 客户端
         if agent is not None:
             from openai import OpenAI as _OAI
+
             agent.client = _OAI(api_key=api_key, base_url=base_url, timeout=180.0)
             CONSOLE.print("  [green]✓[/] AI 客户端已热重载，无需重启")
     else:
@@ -6327,19 +6785,48 @@ def configure_ai_cli(agent: "STM32Agent | None" = None):
 # ─────────────────────────────────────────────────────────────
 class GaryCommandCompleter(Completer):
     COMMANDS = (
-        "/help", "/connect", "/disconnect", "/serial", "/chip", "/status",
-        "/probes", "/projects", "/member", "/telegram", "/skill", "/config", "/language", "/clear",
-        "/exit", "/quit",
+        "/help",
+        "/connect",
+        "/disconnect",
+        "/serial",
+        "/chip",
+        "/status",
+        "/probes",
+        "/projects",
+        "/member",
+        "/telegram",
+        "/skill",
+        "/config",
+        "/language",
+        "/clear",
+        "/exit",
+        "/quit",
     )
     LANGUAGE_OPTIONS = ("en", "zh")
     MEMBER_SUBCOMMANDS = ("path", "reload")
     SKILL_SUBCOMMANDS = (
-        "list", "install", "uninstall", "enable", "disable",
-        "info", "create", "export", "reload", "dir",
+        "list",
+        "install",
+        "uninstall",
+        "enable",
+        "disable",
+        "info",
+        "create",
+        "export",
+        "reload",
+        "dir",
     )
     TELEGRAM_SUBCOMMANDS = (
-        "status", "config", "start", "stop", "restart",
-        "allow", "remove", "allow-all", "whitelist", "reset",
+        "status",
+        "config",
+        "start",
+        "stop",
+        "restart",
+        "allow",
+        "remove",
+        "allow-all",
+        "whitelist",
+        "reset",
     )
     SERIAL_BAUD_RATES = ("9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600")
 
@@ -6383,7 +6870,13 @@ class GaryCommandCompleter(Completer):
         try:
             mgr = _get_manager()
             result = mgr.list_skills()
-            return sorted({s.get("name") or s.get("display_name") for s in result.get("skills", []) if s.get("name") or s.get("display_name")})
+            return sorted(
+                {
+                    s.get("name") or s.get("display_name")
+                    for s in result.get("skills", [])
+                    if s.get("name") or s.get("display_name")
+                }
+            )
         except Exception:
             return []
 
@@ -6430,7 +6923,9 @@ class GaryCommandCompleter(Completer):
 
         if head == "/serial":
             if arg_index == 0:
-                yield from self._complete(current, self._serial_candidates() + list(self.SERIAL_BAUD_RATES))
+                yield from self._complete(
+                    current, self._serial_candidates() + list(self.SERIAL_BAUD_RATES)
+                )
             elif arg_index == 1 and args and args[0] != "list":
                 yield from self._complete(current, self.SERIAL_BAUD_RATES)
             return
@@ -6488,7 +6983,8 @@ class STM32Agent:
                 auto_suggest=AutoSuggestFromHistory(),
                 reserve_space_for_menu=8,
             )
-            if interactive else None
+            if interactive
+            else None
         )
         os.environ.setdefault("no_proxy", "localhost,127.0.0.1")
         os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
@@ -6557,7 +7053,7 @@ class STM32Agent:
             CONSOLE.print(
                 f"[dim]  📦 {_cli_text(f'历史压缩：移除 {removed} 条旧消息', f'History trimmed: removed {removed} old messages')}[/]"
             )
-   
+
     # 原来是直接传 self.messages，改为过滤后传
     def _messages_for_api(self) -> list:
         """发送给 API 前处理消息格式：
@@ -6566,9 +7062,7 @@ class STM32Agent:
         """
         # 检测当前会话是否启用了 thinking 模式
         has_thinking = any(
-            "reasoning_content" in m
-            for m in self.messages
-            if m.get("role") == "assistant"
+            "reasoning_content" in m for m in self.messages if m.get("role") == "assistant"
         )
 
         result = []
@@ -6588,24 +7082,31 @@ class STM32Agent:
     def _request_final_reply_after_tools(self, stream_to_console: bool = True) -> str:
         """部分模型在工具执行后会停在空回复，这里补一次只求最终答复的请求。"""
         if stream_to_console:
-            CONSOLE.print(f"[dim]  ↺ {_cli_text('请求最终答复...', 'Requesting final reply...')}[/]")
+            CONSOLE.print(
+                f"[dim]  ↺ {_cli_text('请求最终答复...', 'Requesting final reply...')}[/]"
+            )
         _telegram_log("chat final_reply_request start")
         try:
             stream = self.client.chat.completions.create(
                 model=AI_MODEL,
-                messages=self._messages_for_api() + [{
-                    "role": "system",
-                    "content": _cli_text(
-                        "请基于上面的工具结果直接给出最终答复，不要再调用工具，也不要只回复“已处理”。",
-                        "Based on the tool results above, provide the final answer directly. Do not call more tools and do not reply with only 'done'.",
-                    ),
-                }],
+                messages=self._messages_for_api()
+                + [
+                    {
+                        "role": "system",
+                        "content": _cli_text(
+                            "请基于上面的工具结果直接给出最终答复，不要再调用工具，也不要只回复“已处理”。",
+                            "Based on the tool results above, provide the final answer directly. Do not call more tools and do not reply with only 'done'.",
+                        ),
+                    }
+                ],
                 temperature=AI_TEMPERATURE,
                 stream=True,
             )
         except Exception as e:
             if stream_to_console:
-                CONSOLE.print(f"\n[red]{_cli_text('最终答复请求失败', 'Final reply request failed')}: {e}[/]")
+                CONSOLE.print(
+                    f"\n[red]{_cli_text('最终答复请求失败', 'Final reply request failed')}: {e}[/]"
+                )
             _telegram_log(f"chat final_reply_request error={str(e)[:160]}")
             return ""
 
@@ -6641,7 +7142,9 @@ class STM32Agent:
                 CONSOLE.print()
         except Exception as e:
             if stream_to_console:
-                CONSOLE.print(f"\n[red]{_cli_text('最终答复流式读取错误', 'Final reply stream error')}: {e}[/]")
+                CONSOLE.print(
+                    f"\n[red]{_cli_text('最终答复流式读取错误', 'Final reply stream error')}: {e}[/]"
+                )
             _telegram_log(f"chat final_reply_stream error={str(e)[:160]}")
             return ""
 
@@ -6672,10 +7175,12 @@ class STM32Agent:
         return f"{tool_name}: {text}"
 
     def _build_tool_only_reply(self, tool_summaries: list[str], reply_parts: list[str]) -> str:
-        lines = [_cli_text(
-            "模型没有输出最终总结，我根据本次执行结果整理如下：",
-            "The model did not return a final summary. Based on this run:",
-        )]
+        lines = [
+            _cli_text(
+                "模型没有输出最终总结，我根据本次执行结果整理如下：",
+                "The model did not return a final summary. Based on this run:",
+            )
+        ]
         if reply_parts:
             preface = (reply_parts[-1] or "").strip()
             if preface:
@@ -6685,7 +7190,7 @@ class STM32Agent:
         for item in tool_summaries[-5:]:
             lines.append(f"- {item}")
         return "\n".join(lines)
-   
+
     # ── 流式响应 + 工具调用 ─────────────────────────────────
     def chat(
         self,
@@ -6747,7 +7252,9 @@ class STM32Agent:
                         if stream_to_console:
                             CONSOLE.print(delta.content, end="", style="white")
                         if text_callback:
-                            preview_text = "\n\n".join(part for part in [*reply_parts, content.strip()] if part).strip()
+                            preview_text = "\n\n".join(
+                                part for part in [*reply_parts, content.strip()] if part
+                            ).strip()
                             text_callback(preview_text)
 
                     # 工具调用
@@ -6755,13 +7262,20 @@ class STM32Agent:
                         # 用 model_dump() 获取含 Gemini extra_content 的完整 chunk 数据
                         try:
                             _chunk_dict = chunk.model_dump()
-                            _raw_tcs = (_chunk_dict.get("choices") or [{}])[0].get("delta", {}).get("tool_calls") or []
+                            _raw_tcs = (_chunk_dict.get("choices") or [{}])[0].get("delta", {}).get(
+                                "tool_calls"
+                            ) or []
                         except Exception:
                             _raw_tcs = []
                         for i, tc in enumerate(delta.tool_calls):
                             idx = tc.index
                             if idx not in tool_calls_raw:
-                                tool_calls_raw[idx] = {"id": "", "name": "", "args": "", "thought_signature": ""}
+                                tool_calls_raw[idx] = {
+                                    "id": "",
+                                    "name": "",
+                                    "args": "",
+                                    "thought_signature": "",
+                                }
                             if tc.id:
                                 tool_calls_raw[idx]["id"] = tc.id
                             if tc.function and tc.function.name:
@@ -6772,11 +7286,17 @@ class STM32Agent:
                             # 必须原样回传到 function.thought_signature，否则下次请求报 400
                             _raw_tc = _raw_tcs[i] if i < len(_raw_tcs) else {}
                             sig = (
-                                (_raw_tc.get("extra_content") or {}).get("google", {}).get("thought_signature")
+                                (_raw_tc.get("extra_content") or {})
+                                .get("google", {})
+                                .get("thought_signature")
                                 or (_raw_tc.get("function") or {}).get("thought_signature")
                                 or _raw_tc.get("thought_signature")
                                 or getattr(tc, "thought_signature", None)
-                                or (getattr(tc.function, "thought_signature", None) if tc.function else None)
+                                or (
+                                    getattr(tc.function, "thought_signature", None)
+                                    if tc.function
+                                    else None
+                                )
                             )
                             if sig:
                                 tool_calls_raw[idx]["thought_signature"] += sig
@@ -6801,7 +7321,9 @@ class STM32Agent:
                     reply_parts.append(content.strip())
                     break
                 if used_tools:
-                    final_reply = self._request_final_reply_after_tools(stream_to_console=stream_to_console)
+                    final_reply = self._request_final_reply_after_tools(
+                        stream_to_console=stream_to_console
+                    )
                     if final_reply:
                         self.messages.append({"role": "assistant", "content": final_reply})
                         reply_parts.append(final_reply)
@@ -6823,11 +7345,13 @@ class STM32Agent:
                 func_dict: dict = {"name": tc["name"], "arguments": tc["args"]}
                 if tc.get("thought_signature"):  # Gemini 思考签名，必须原样回传
                     func_dict["thought_signature"] = tc["thought_signature"]
-                tool_calls_list.append({
-                    "id": tc["id"],
-                    "type": "function",
-                    "function": func_dict,
-                })
+                tool_calls_list.append(
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": func_dict,
+                    }
+                )
             assistant_tool_msg = {
                 "role": "assistant",
                 "content": content or "",
@@ -6857,7 +7381,9 @@ class STM32Agent:
                         result_obj = TOOLS_MAP[func_name](**args)
                         result_str = json.dumps(result_obj, ensure_ascii=False, indent=2)
                     else:
-                        missing_tool = _cli_text(f"工具不存在: {func_name}", f"Tool not found: {func_name}")
+                        missing_tool = _cli_text(
+                            f"工具不存在: {func_name}", f"Tool not found: {func_name}"
+                        )
                         result_str = json.dumps({"error": missing_tool}, ensure_ascii=False)
                         result_obj = {"error": missing_tool}
                 except Exception as e:
@@ -6871,15 +7397,24 @@ class STM32Agent:
                 if stream_to_console:
                     CONSOLE.print(f" → [dim green]{preview}[/]")
                 if tool_callback:
-                    tool_callback({"phase": "finish", "name": func_name, "preview": preview, "result": result_str})
+                    tool_callback(
+                        {
+                            "phase": "finish",
+                            "name": func_name,
+                            "preview": preview,
+                            "result": result_str,
+                        }
+                    )
                 _telegram_log(f"chat tool_exec_finish name={func_name} preview={preview[:80]}")
                 tool_summaries.append(self._summarize_tool_result(func_name, result_obj, preview))
 
-                tool_results.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": self._truncate_result(result_str, func_name),
-                })
+                tool_results.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": self._truncate_result(result_str, func_name),
+                    }
+                )
 
             self.messages.extend(tool_results)
             self.refresh_system_prompt()
@@ -6906,13 +7441,20 @@ class STM32Agent:
             CONSOLE.print(f"\n[{THEME}]{_cli_text('连接硬件...', 'Connecting hardware...')}[/]")
             r = stm32_connect(chip)
             if r["success"]:
-                serial_state = _cli_text("已连接", "connected") if r.get("serial_connected") else _cli_text("未连接", "disconnected")
+                serial_state = (
+                    _cli_text("已连接", "connected")
+                    if r.get("serial_connected")
+                    else _cli_text("未连接", "disconnected")
+                )
                 msg = _cli_text(
                     f"硬件已连接: {r.get('chip', _current_chip)}  串口: {serial_state}",
                     f"Connected: {r.get('chip', _current_chip)}  Serial: {serial_state}",
                 )
             else:
-                msg = _cli_text("连接失败，请检查探针 USB 连接和驱动", "Connection failed. Check the probe USB connection and driver.")
+                msg = _cli_text(
+                    "连接失败，请检查探针 USB 连接和驱动",
+                    "Connection failed. Check the probe USB connection and driver.",
+                )
             CONSOLE.print(f"[{'green' if r['success'] else 'red'}]{msg}[/]\n")
             return True
 
@@ -6938,17 +7480,22 @@ class STM32Agent:
             if tokens and tokens[0] == "list":
                 ports = detect_serial_ports()
                 if ports:
-                    CONSOLE.print(f"[green]  {_cli_text('可用串口:', 'Available serial ports:')}[/]")
+                    CONSOLE.print(
+                        f"[green]  {_cli_text('可用串口:', 'Available serial ports:')}[/]"
+                    )
                     for p in ports:
                         try:
                             import serial.tools.list_ports as lp
+
                             infos = {i.device: i.description for i in lp.comports()}
                             desc = infos.get(p, "")
                         except Exception:
                             desc = ""
                         CONSOLE.print(f"    {p}  {desc}")
                 else:
-                    CONSOLE.print(f"[yellow]  {_cli_text('未检测到可用串口', 'No serial ports detected')}[/]")
+                    CONSOLE.print(
+                        f"[yellow]  {_cli_text('未检测到可用串口', 'No serial ports detected')}[/]"
+                    )
                 CONSOLE.print()
                 return True
             port = tokens[0] if tokens and tokens[0].startswith("/dev/") else None
@@ -6976,16 +7523,22 @@ class STM32Agent:
 
         if head == "/chip":
             if not arg:
-                CONSOLE.print(f"[{THEME}]{_cli_text('当前芯片', 'Current chip')}: {_current_chip}[/]\n")
+                CONSOLE.print(
+                    f"[{THEME}]{_cli_text('当前芯片', 'Current chip')}: {_current_chip}[/]\n"
+                )
             else:
                 r = stm32_set_chip(arg)
-                CONSOLE.print(f"[{THEME}]{_cli_text('已切换', 'Switched to')}: {r['chip']} ({r['family']})[/]\n")
+                CONSOLE.print(
+                    f"[{THEME}]{_cli_text('已切换', 'Switched to')}: {r['chip']} ({r['family']})[/]\n"
+                )
             return True
 
         if head == "/language":
             target = _parse_cli_language(arg, default="en")
             if target is None:
-                CONSOLE.print(f"[yellow]{_cli_text('用法: /language [en|zh]', 'Usage: /language [en|zh]')}[/]\n")
+                CONSOLE.print(
+                    f"[yellow]{_cli_text('用法: /language [en|zh]', 'Usage: /language [en|zh]')}[/]\n"
+                )
                 return True
             result = self.set_cli_language(target)
             if target == "en":
@@ -7021,7 +7574,9 @@ class STM32Agent:
                 for p in probes["probes"]:
                     CONSOLE.print(f"  [{THEME}]{p['description']}[/] ({p['uid']})")
             else:
-                CONSOLE.print(f"[yellow]{_cli_text('未检测到任何探针，请检查 USB 连接', 'No probes detected. Check the USB connection.')}[/]")
+                CONSOLE.print(
+                    f"[yellow]{_cli_text('未检测到任何探针，请检查 USB 连接', 'No probes detected. Check the USB connection.')}[/]"
+                )
             CONSOLE.print()
             return True
 
@@ -7044,18 +7599,30 @@ class STM32Agent:
             subcmd = arg.strip().lower()
             if subcmd == "path":
                 path = _ensure_member_file()
-                CONSOLE.print(f"[{THEME}]{_cli_text('member.md 路径', 'member.md path')}: {path}[/]\n")
+                CONSOLE.print(
+                    f"[{THEME}]{_cli_text('member.md 路径', 'member.md path')}: {path}[/]\n"
+                )
                 return True
             if subcmd == "reload":
                 self.refresh_system_prompt()
-                CONSOLE.print(f"[green]{_cli_text('member.md 已重新加载到当前会话', 'member.md reloaded into the current session')}[/]\n")
+                CONSOLE.print(
+                    f"[green]{_cli_text('member.md 已重新加载到当前会话', 'member.md reloaded into the current session')}[/]\n"
+                )
                 return True
             if subcmd and subcmd not in {"path", "reload"}:
-                CONSOLE.print(f"[yellow]{_cli_text('用法: /member [path|reload]', 'Usage: /member [path|reload]')}[/]\n")
+                CONSOLE.print(
+                    f"[yellow]{_cli_text('用法: /member [path|reload]', 'Usage: /member [path|reload]')}[/]\n"
+                )
                 return True
             self.refresh_system_prompt()
             title = _cli_text("Gary 经验库", "Gary Memory")
-            CONSOLE.print(Panel(Markdown(_member_preview_markdown()), title=f"[bold {THEME}]{title}[/]", border_style=THEME))
+            CONSOLE.print(
+                Panel(
+                    Markdown(_member_preview_markdown()),
+                    title=f"[bold {THEME}]{title}[/]",
+                    border_style=THEME,
+                )
+            )
             CONSOLE.print()
             return True
 
@@ -7070,7 +7637,9 @@ class STM32Agent:
             return True
 
         if head in ("/exit", "/quit"):
-            CONSOLE.print(f"\n[{THEME}]{_cli_text('正在退出，清理硬件和 Telegram...', 'Exiting, cleaning up hardware and Telegram...')}[/]")
+            CONSOLE.print(
+                f"\n[{THEME}]{_cli_text('正在退出，清理硬件和 Telegram...', 'Exiting, cleaning up hardware and Telegram...')}[/]"
+            )
             shutdown = _shutdown_cli_runtime(stop_telegram=True)
             tg = shutdown.get("telegram", {})
             if tg.get("message"):
@@ -7094,7 +7663,8 @@ class STM32Agent:
                 f"Hardware: [green]connected[/]  Serial: [{'green' if _serial_connected else 'yellow'}]"
                 f"{'connected' if _serial_connected else 'disconnected'}[/]",
             )
-            if _hw_connected else _cli_text("硬件: [dim]未连接[/]", "Hardware: [dim]disconnected[/]")
+            if _hw_connected
+            else _cli_text("硬件: [dim]未连接[/]", "Hardware: [dim]disconnected[/]")
         )
         art = (
             "   ██████╗  █████╗ ██████╗ ██╗   ██╗\n"
@@ -7120,22 +7690,70 @@ class STM32Agent:
         table.add_column(_cli_text("命令", "Command"), style=f"bold {THEME}")
         table.add_column(_cli_text("说明", "Description"), style="white")
         cmds = [
-            ("/connect [chip]",         _cli_text("连接探针（如 /connect STM32F103C8T6）", "Connect the probe (for example: /connect STM32F103C8T6)")),
-            ("/serial [port] [baud]",   _cli_text("连接串口（如 /serial /dev/ttyUSB0 115200）", "Connect serial (for example: /serial /dev/ttyUSB0 115200)")),
-            ("/disconnect",             _cli_text("断开探针和串口", "Disconnect probe and serial")),
-            ("/chip [model]",           _cli_text("查看/切换芯片型号", "Show or change the chip model")),
-            ("/language [en|zh]",       _cli_text("切换 CLI 语言，默认一键切到英文", "Switch CLI language. `/language` switches to English immediately")),
-            ("/probes",                 _cli_text("列出所有可用探针", "List all available probes")),
-            ("/status",                 _cli_text("查看硬件+工具链状态", "Show hardware and toolchain status")),
-            ("/config",                 _cli_text("配置 AI 接口（API Key / Model / Base URL）", "Configure AI settings (API Key / Model / Base URL)")),
-            ("/projects",               _cli_text("列出历史项目", "List saved projects")),
-            ("/member [path|reload]",   _cli_text("查看经验库；`path` 显示路径；`reload` 重新载入 member.md", "View memory; `path` shows the file location; `reload` refreshes member.md")),
-            ("/telegram [subcommand]",  _cli_text("Telegram 机器人管理: start/stop/status/allow/remove/reset", "Manage the Telegram bot: start/stop/status/allow/remove/reset")),
-            ("/clear",                  _cli_text("清空对话历史", "Clear conversation history")),
-            ("/exit",                   _cli_text("退出并停止 Telegram", "Exit and stop Telegram")),
-            ("?",                       _cli_text("显示帮助", "Show help")),
-            ("Tab",                     _cli_text("补全命令/子命令/芯片/串口/技能名，历史输入会自动预测", "Complete commands, subcommands, chips, serial ports, and skills; history is suggested automatically")),
-            ("/skill [subcommand]",     _cli_text("技能管理: list/install/enable/disable/create/export", "Manage skills: list/install/enable/disable/create/export")),
+            (
+                "/connect [chip]",
+                _cli_text(
+                    "连接探针（如 /connect STM32F103C8T6）",
+                    "Connect the probe (for example: /connect STM32F103C8T6)",
+                ),
+            ),
+            (
+                "/serial [port] [baud]",
+                _cli_text(
+                    "连接串口（如 /serial /dev/ttyUSB0 115200）",
+                    "Connect serial (for example: /serial /dev/ttyUSB0 115200)",
+                ),
+            ),
+            ("/disconnect", _cli_text("断开探针和串口", "Disconnect probe and serial")),
+            ("/chip [model]", _cli_text("查看/切换芯片型号", "Show or change the chip model")),
+            (
+                "/language [en|zh]",
+                _cli_text(
+                    "切换 CLI 语言，默认一键切到英文",
+                    "Switch CLI language. `/language` switches to English immediately",
+                ),
+            ),
+            ("/probes", _cli_text("列出所有可用探针", "List all available probes")),
+            ("/status", _cli_text("查看硬件+工具链状态", "Show hardware and toolchain status")),
+            (
+                "/config",
+                _cli_text(
+                    "配置 AI 接口（API Key / Model / Base URL）",
+                    "Configure AI settings (API Key / Model / Base URL)",
+                ),
+            ),
+            ("/projects", _cli_text("列出历史项目", "List saved projects")),
+            (
+                "/member [path|reload]",
+                _cli_text(
+                    "查看经验库；`path` 显示路径；`reload` 重新载入 member.md",
+                    "View memory; `path` shows the file location; `reload` refreshes member.md",
+                ),
+            ),
+            (
+                "/telegram [subcommand]",
+                _cli_text(
+                    "Telegram 机器人管理: start/stop/status/allow/remove/reset",
+                    "Manage the Telegram bot: start/stop/status/allow/remove/reset",
+                ),
+            ),
+            ("/clear", _cli_text("清空对话历史", "Clear conversation history")),
+            ("/exit", _cli_text("退出并停止 Telegram", "Exit and stop Telegram")),
+            ("?", _cli_text("显示帮助", "Show help")),
+            (
+                "Tab",
+                _cli_text(
+                    "补全命令/子命令/芯片/串口/技能名，历史输入会自动预测",
+                    "Complete commands, subcommands, chips, serial ports, and skills; history is suggested automatically",
+                ),
+            ),
+            (
+                "/skill [subcommand]",
+                _cli_text(
+                    "技能管理: list/install/enable/disable/create/export",
+                    "Manage skills: list/install/enable/disable/create/export",
+                ),
+            ),
         ]
         for cmd, desc in cmds:
             table.add_row(cmd, desc)
@@ -7144,7 +7762,11 @@ class STM32Agent:
 
     def _status_bar(self):
         tokens = self._tokens()
-        hw = f"[green]●[/] {_current_chip}" if _hw_connected else _cli_text("[dim]○ 未连接[/]", "[dim]○ Disconnected[/]")
+        hw = (
+            f"[green]●[/] {_current_chip}"
+            if _hw_connected
+            else _cli_text("[dim]○ 未连接[/]", "[dim]○ Disconnected[/]")
+        )
         CONSOLE.print(
             f"[dim]{hw}  │  {AI_MODEL}  │  {_cli_text('上下文', 'context')}: ~{tokens} tokens[/]"
         )
@@ -7180,7 +7802,9 @@ class STM32Agent:
                 self.chat(user_input)
 
             except KeyboardInterrupt:
-                CONSOLE.print(f"\n[dim]{_cli_text('Ctrl+C 中断。/exit 退出。', 'Interrupted by Ctrl+C. Use /exit to quit.')}[/]")
+                CONSOLE.print(
+                    f"\n[dim]{_cli_text('Ctrl+C 中断。/exit 退出。', 'Interrupted by Ctrl+C. Use /exit to quit.')}[/]"
+                )
             except EOFError:
                 _shutdown_cli_runtime(stop_telegram=True)
                 break
@@ -7201,7 +7825,7 @@ def main():
         sys.exit(0)
     if "--telegram" in args:
         idx = args.index("--telegram")
-        handle_telegram_command(" ".join(args[idx + 1:]), source="cli")
+        handle_telegram_command(" ".join(args[idx + 1 :]), source="cli")
         sys.exit(0)
 
     # ── 诊断模式：Gary doctor ────────────────────────────────
@@ -7228,50 +7852,80 @@ def main():
     if ci.get("gcc"):
         CONSOLE.print(f"[green]  GCC: {ci['gcc_version']}[/]")
     else:
-        CONSOLE.print(f"[yellow]  GCC: {_cli_text('未找到 arm-none-eabi-gcc', 'arm-none-eabi-gcc not found')}[/]")
+        CONSOLE.print(
+            f"[yellow]  GCC: {_cli_text('未找到 arm-none-eabi-gcc', 'arm-none-eabi-gcc not found')}[/]"
+        )
 
     if ci.get("hal"):
         CONSOLE.print(f"[green]  HAL: {_cli_text('已就绪', 'ready')}[/]")
     else:
-        CONSOLE.print(f"[yellow]  HAL: {_cli_text('未找到，请运行 setup.sh', 'not found, run setup.sh')}[/]")
+        CONSOLE.print(
+            f"[yellow]  HAL: {_cli_text('未找到，请运行 setup.sh', 'not found, run setup.sh')}[/]"
+        )
 
     # pyocd
     try:
         import pyocd
+
         CONSOLE.print(f"[green]  pyocd: {pyocd.__version__}[/]")
     except ImportError:
-        CONSOLE.print(f"[yellow]  pyocd: {_cli_text('未安装（pip install pyocd）', 'not installed (pip install pyocd)')}[/]")
+        CONSOLE.print(
+            f"[yellow]  pyocd: {_cli_text('未安装（pip install pyocd）', 'not installed (pip install pyocd)')}[/]"
+        )
 
     # 串口自动扫描
     import platform as _platform, glob as _glob
+
     serial_candidates = detect_serial_ports(verbose=False)
     if serial_candidates:
-        CONSOLE.print(f"[green]  {_cli_text('串口', 'Serial')}: {_cli_text(f'检测到 {serial_candidates}（连接时自动选择）', f'detected {serial_candidates} (auto-selected on connect)')}[/]")
+        CONSOLE.print(
+            f"[green]  {_cli_text('串口', 'Serial')}: {_cli_text(f'检测到 {serial_candidates}（连接时自动选择）', f'detected {serial_candidates} (auto-selected on connect)')}[/]"
+        )
     else:
         _plat = _platform.system()
         # 扫不到 → 检查是否权限问题，给出平台相关修复命令
         if _plat == "Linux":
             import grp as _grp
-            no_perm = [p for pat in ["/dev/ttyUSB*", "/dev/ttyACM*", "/dev/ttyS[4-9]*"]
-                       for p in _glob.glob(pat)
-                       if os.path.exists(p) and not os.access(p, os.R_OK | os.W_OK)]
+
+            no_perm = [
+                p
+                for pat in ["/dev/ttyUSB*", "/dev/ttyACM*", "/dev/ttyS[4-9]*"]
+                for p in _glob.glob(pat)
+                if os.path.exists(p) and not os.access(p, os.R_OK | os.W_OK)
+            ]
             if no_perm:
                 try:
                     grp_name = _grp.getgrgid(os.stat(no_perm[0]).st_gid).gr_name
                 except Exception:
                     grp_name = "dialout"
-                CONSOLE.print(f"[yellow]  {_cli_text('串口', 'Serial')}: {_cli_text(f'发现 {no_perm} 但权限不足', f'found {no_perm} but permissions are insufficient')}[/]")
-                CONSOLE.print(f"[yellow]    → sudo usermod -aG {grp_name} $USER && newgrp {grp_name}[/]")
+                CONSOLE.print(
+                    f"[yellow]  {_cli_text('串口', 'Serial')}: {_cli_text(f'发现 {no_perm} 但权限不足', f'found {no_perm} but permissions are insufficient')}[/]"
+                )
+                CONSOLE.print(
+                    f"[yellow]    → sudo usermod -aG {grp_name} $USER && newgrp {grp_name}[/]"
+                )
             else:
-                CONSOLE.print(f"[dim]  {_cli_text('串口', 'Serial')}: {_cli_text('未检测到串口设备（连接硬件后重试）', 'no serial device detected (connect hardware and retry)')}[/]")
+                CONSOLE.print(
+                    f"[dim]  {_cli_text('串口', 'Serial')}: {_cli_text('未检测到串口设备（连接硬件后重试）', 'no serial device detected (connect hardware and retry)')}[/]"
+                )
         elif _plat == "Darwin":
-            CONSOLE.print(f"[dim]  {_cli_text('串口', 'Serial')}: {_cli_text('未检测到串口设备', 'no serial device detected')}[/]")
-            CONSOLE.print(f"[dim]    {_cli_text('插上 USB 转串口后重启程序，或运行 /serial list 查看', 'Reconnect your USB serial adapter and restart, or run /serial list')}[/]")
+            CONSOLE.print(
+                f"[dim]  {_cli_text('串口', 'Serial')}: {_cli_text('未检测到串口设备', 'no serial device detected')}[/]"
+            )
+            CONSOLE.print(
+                f"[dim]    {_cli_text('插上 USB 转串口后重启程序，或运行 /serial list 查看', 'Reconnect your USB serial adapter and restart, or run /serial list')}[/]"
+            )
         elif _plat == "Windows":
-            CONSOLE.print(f"[dim]  {_cli_text('串口', 'Serial')}: {_cli_text('未检测到 COM 口', 'no COM ports detected')}[/]")
-            CONSOLE.print(f"[dim]    {_cli_text('请在设备管理器确认驱动已安装（CH340/CP210x），或运行 /serial list', 'Check the driver in Device Manager (CH340/CP210x), or run /serial list')}[/]")
+            CONSOLE.print(
+                f"[dim]  {_cli_text('串口', 'Serial')}: {_cli_text('未检测到 COM 口', 'no COM ports detected')}[/]"
+            )
+            CONSOLE.print(
+                f"[dim]    {_cli_text('请在设备管理器确认驱动已安装（CH340/CP210x），或运行 /serial list', 'Check the driver in Device Manager (CH340/CP210x), or run /serial list')}[/]"
+            )
         else:
-            CONSOLE.print(f"[dim]  {_cli_text('串口', 'Serial')}: {_cli_text('未检测到串口设备（连接硬件后重试）', 'no serial device detected (connect hardware and retry)')}[/]")
+            CONSOLE.print(
+                f"[dim]  {_cli_text('串口', 'Serial')}: {_cli_text('未检测到串口设备（连接硬件后重试）', 'no serial device detected (connect hardware and retry)')}[/]"
+            )
 
     CONSOLE.print()
 
@@ -7280,7 +7934,9 @@ def main():
         idx = args.index("--do")
         task = args[idx + 1] if idx + 1 < len(args) else ""
         if not task:
-            CONSOLE.print(f"[red]{_cli_text('--do 后需要任务描述，例如: Gary do \"让 PA0 LED 闪烁\"', '--do requires a task description, for example: Gary do \"blink PA0 LED\"')}[/]")
+            CONSOLE.print(
+                f"[red]{_cli_text('--do 后需要任务描述，例如: Gary do \"让 PA0 LED 闪烁\"', '--do requires a task description, for example: Gary do \"blink PA0 LED\"')}[/]"
+            )
             sys.exit(1)
         if "--connect" in args:
             chip_arg = None

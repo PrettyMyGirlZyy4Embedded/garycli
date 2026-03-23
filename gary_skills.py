@@ -26,13 +26,16 @@ try:
     from rich.console import Console
     from rich.table import Table
     from rich import box
+
     CONSOLE = Console()
 except ImportError:
+
     class _FC:
         def print(self, *a, **kw):
             text = str(a[0]) if a else ""
-            text = re.sub(r'\[.*?\]', '', text)
+            text = re.sub(r"\[.*?\]", "", text)
             print(text)
+
     CONSOLE = _FC()
 
 
@@ -40,15 +43,17 @@ except ImportError:
 # Skill 元信息
 # ─────────────────────────────────────────────────────────────
 
+
 @dataclass
 class SkillMeta:
     """skill.json 对应的数据结构"""
-    name: str = ""                      # 唯一标识（英文，下划线分隔）
-    display_name: str = ""              # 显示名称（可中文）
+
+    name: str = ""  # 唯一标识（英文，下划线分隔）
+    display_name: str = ""  # 显示名称（可中文）
     version: str = "1.0.0"
-    description: str = ""               # 一句话描述
+    description: str = ""  # 一句话描述
     author: str = ""
-    url: str = ""                       # 项目/仓库地址
+    url: str = ""  # 项目/仓库地址
     license: str = "MIT"
     tags: List[str] = field(default_factory=list)  # 标签: ["pid", "motor", "control"]
     chip_families: List[str] = field(default_factory=lambda: ["all"])  # 适用芯片系列
@@ -76,9 +81,11 @@ class SkillMeta:
 # Skill 加载器
 # ─────────────────────────────────────────────────────────────
 
+
 @dataclass
 class LoadedSkill:
     """一个已加载的 skill 实例"""
+
     meta: SkillMeta
     path: Path
     tools_map: Dict[str, Any] = field(default_factory=dict)
@@ -166,7 +173,8 @@ def load_skill(skill_dir: Path) -> LoadedSkill:
         skill.tools_map = {
             name: getattr(module, name)
             for name in dir(module)
-            if not name.startswith("_") and callable(getattr(module, name))
+            if not name.startswith("_")
+            and callable(getattr(module, name))
             and not isinstance(getattr(module, name), type)
         }
 
@@ -193,6 +201,7 @@ def load_skill(skill_dir: Path) -> LoadedSkill:
 # ─────────────────────────────────────────────────────────────
 # Skills Manager
 # ─────────────────────────────────────────────────────────────
+
 
 class SkillsManager:
     """
@@ -227,9 +236,11 @@ class SkillsManager:
                 if meta_file.exists():
                     try:
                         m = json.loads(meta_file.read_text(encoding="utf-8"))
-                        data[d.name] = {"enabled": False,
-                                         "install_time": m.get("install_time", ""),
-                                         "version": m.get("version", "")}
+                        data[d.name] = {
+                            "enabled": False,
+                            "install_time": m.get("install_time", ""),
+                            "version": m.get("version", ""),
+                        }
                     except Exception:
                         pass
         SKILLS_REGISTRY.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -270,7 +281,9 @@ class SkillsManager:
             self._skills[skill.meta.name] = skill
 
             if skill.meta.load_error:
-                CONSOLE.print(f"[yellow]  ⚠ Skill [{skill.meta.name}] 加载有错: {skill.meta.load_error[:80]}[/]")
+                CONSOLE.print(
+                    f"[yellow]  ⚠ Skill [{skill.meta.name}] 加载有错: {skill.meta.load_error[:80]}[/]"
+                )
             else:
                 CONSOLE.print(
                     f"[green]  ✓ Skill [{skill.meta.display_name or skill.meta.name}] "
@@ -338,7 +351,10 @@ class SkillsManager:
         if source.startswith("http") and (".git" in source or "github.com" in source):
             return self._install_from_git(source)
 
-        return {"success": False, "message": f"不支持的来源: {source}\n支持: 目录、.zip、.py、Git URL"}
+        return {
+            "success": False,
+            "message": f"不支持的来源: {source}\n支持: 目录、.zip、.py、Git URL",
+        }
 
     def _validate_skill_dir(self, d: Path) -> Tuple[bool, str]:
         """验证 skill 目录完整性"""
@@ -381,7 +397,9 @@ class SkillsManager:
 
         # 更新安装时间
         meta["install_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        (dest / "skill.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+        (dest / "skill.json").write_text(
+            json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
         # 安装依赖
         self._install_deps(dest)
@@ -402,9 +420,10 @@ class SkillsManager:
     def _install_from_zip(self, zip_path: Path) -> dict:
         """从 .zip 文件安装"""
         import tempfile
+
         tmp = Path(tempfile.mkdtemp(prefix="gary_skill_"))
         try:
-            with zipfile.ZipFile(str(zip_path), 'r') as zf:
+            with zipfile.ZipFile(str(zip_path), "r") as zf:
                 zf.extractall(str(tmp))
 
             # zip 可能有顶层目录，也可能直接是文件
@@ -466,7 +485,9 @@ class SkillsManager:
             "tags": ["imported"],
             "schema_version": SKILL_SCHEMA_VERSION,
         }
-        (skill_dir / "skill.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+        (skill_dir / "skill.json").write_text(
+            json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
         # 生成 schemas.json
         if schemas:
@@ -483,11 +504,14 @@ class SkillsManager:
     def _install_from_git(self, url: str) -> dict:
         """从 Git 仓库安装"""
         import tempfile
+
         tmp = Path(tempfile.mkdtemp(prefix="gary_skill_git_"))
         try:
             result = subprocess.run(
                 ["git", "clone", "--depth", "1", url, str(tmp / "repo")],
-                capture_output=True, text=True, timeout=60
+                capture_output=True,
+                text=True,
+                timeout=60,
             )
             if result.returncode != 0:
                 return {"success": False, "message": f"git clone 失败: {result.stderr[:200]}"}
@@ -513,7 +537,11 @@ class SkillsManager:
         if not req_file.exists():
             return
 
-        deps = [l.strip() for l in req_file.read_text().splitlines() if l.strip() and not l.startswith("#")]
+        deps = [
+            l.strip()
+            for l in req_file.read_text().splitlines()
+            if l.strip() and not l.startswith("#")
+        ]
         if not deps:
             return
 
@@ -521,7 +549,8 @@ class SkillsManager:
         try:
             subprocess.run(
                 [sys.executable, "-m", "pip", "install", "--quiet"] + deps,
-                capture_output=True, timeout=120
+                capture_output=True,
+                timeout=120,
             )
         except Exception as e:
             CONSOLE.print(f"[yellow]  依赖安装失败: {e}[/]")
@@ -533,7 +562,9 @@ class SkillsManager:
         skill_dir = SKILLS_DIR / name
         disabled_dir = DISABLED_DIR / name
 
-        target = skill_dir if skill_dir.exists() else (disabled_dir if disabled_dir.exists() else None)
+        target = (
+            skill_dir if skill_dir.exists() else (disabled_dir if disabled_dir.exists() else None)
+        )
         if target is None:
             return {"success": False, "message": f"技能不存在: {name}"}
 
@@ -592,17 +623,19 @@ class SkillsManager:
 
         # 已启用
         for name, skill in self._skills.items():
-            skills.append({
-                "name": name,
-                "display_name": skill.meta.display_name or name,
-                "version": skill.meta.version,
-                "description": skill.meta.description,
-                "tools_count": skill.meta.tools_count,
-                "enabled": True,
-                "error": skill.meta.load_error[:60] if skill.meta.load_error else "",
-                "author": skill.meta.author,
-                "tags": skill.meta.tags,
-            })
+            skills.append(
+                {
+                    "name": name,
+                    "display_name": skill.meta.display_name or name,
+                    "version": skill.meta.version,
+                    "description": skill.meta.description,
+                    "tools_count": skill.meta.tools_count,
+                    "enabled": True,
+                    "error": skill.meta.load_error[:60] if skill.meta.load_error else "",
+                    "author": skill.meta.author,
+                    "tags": skill.meta.tags,
+                }
+            )
 
         # 已禁用
         for d in DISABLED_DIR.iterdir():
@@ -611,17 +644,19 @@ class SkillsManager:
                 if meta_file.exists():
                     try:
                         m = json.loads(meta_file.read_text(encoding="utf-8"))
-                        skills.append({
-                            "name": m.get("name", d.name),
-                            "display_name": m.get("display_name", d.name),
-                            "version": m.get("version", "?"),
-                            "description": m.get("description", ""),
-                            "tools_count": 0,
-                            "enabled": False,
-                            "error": "",
-                            "author": m.get("author", ""),
-                            "tags": m.get("tags", []),
-                        })
+                        skills.append(
+                            {
+                                "name": m.get("name", d.name),
+                                "display_name": m.get("display_name", d.name),
+                                "version": m.get("version", "?"),
+                                "description": m.get("description", ""),
+                                "tools_count": 0,
+                                "enabled": False,
+                                "error": "",
+                                "author": m.get("author", ""),
+                                "tags": m.get("tags", []),
+                            }
+                        )
                     except Exception:
                         pass
 
@@ -652,7 +687,7 @@ class SkillsManager:
 
     def create_template(self, name: str, description: str = "") -> dict:
         """在 skills/ 下创建技能模板目录"""
-        name = re.sub(r'[^a-zA-Z0-9_]', '_', name.lower().strip())
+        name = re.sub(r"[^a-zA-Z0-9_]", "_", name.lower().strip())
         dest = SKILLS_DIR / name
         if dest.exists():
             return {"success": False, "message": f"已存在: {name}"}
@@ -675,10 +710,13 @@ class SkillsManager:
             "min_gary_version": "1.0.0",
             "schema_version": SKILL_SCHEMA_VERSION,
         }
-        (dest / "skill.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+        (dest / "skill.json").write_text(
+            json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
         # tools.py 模板
-        (dest / "tools.py").write_text(f'''#!/usr/bin/env python3
+        (dest / "tools.py").write_text(
+            f'''#!/usr/bin/env python3
 """
 {name} — Gary Skill
 """
@@ -697,31 +735,41 @@ def {name}_hello() -> dict:
 TOOLS_MAP: Dict[str, Any] = {{
     "{name}_hello": {name}_hello,
 }}
-''', encoding="utf-8")
+''',
+            encoding="utf-8",
+        )
 
         # schemas.json 模板
-        schemas = [{
-            "type": "function",
-            "function": {
-                "name": f"{name}_hello",
-                "description": f"示例工具 - {name}",
-                "parameters": {"type": "object", "properties": {}, "required": []},
-            },
-        }]
-        (dest / "schemas.json").write_text(json.dumps(schemas, indent=2, ensure_ascii=False), encoding="utf-8")
+        schemas = [
+            {
+                "type": "function",
+                "function": {
+                    "name": f"{name}_hello",
+                    "description": f"示例工具 - {name}",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            }
+        ]
+        (dest / "schemas.json").write_text(
+            json.dumps(schemas, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
         # prompt.md 模板
-        (dest / "prompt.md").write_text(f"""## {name.replace('_', ' ').title()} Skill
+        (dest / "prompt.md").write_text(
+            f"""## {name.replace('_', ' ').title()} Skill
 
 这个技能提供了以下工具：
 - `{name}_hello` — 示例工具
 
 ### 使用场景
 （在这里描述 AI 应该在什么情况下使用这些工具）
-""", encoding="utf-8")
+""",
+            encoding="utf-8",
+        )
 
         # README.md
-        (dest / "README.md").write_text(f"""# {name.replace('_', ' ').title()}
+        (dest / "README.md").write_text(
+            f"""# {name.replace('_', ' ').title()}
 
 Gary Dev Agent Skill.
 
@@ -735,7 +783,9 @@ Gary Dev Agent Skill.
 
 ## 开发
 编辑 `tools.py` 添加工具函数，同步更新 `schemas.json` 和 `TOOLS_MAP`。
-""", encoding="utf-8")
+""",
+            encoding="utf-8",
+        )
 
         # requirements.txt（空）
         (dest / "requirements.txt").write_text("# 在此添加 Python 依赖\n", encoding="utf-8")
@@ -763,7 +813,7 @@ Gary Dev Agent Skill.
         zip_name = f"gary_skill_{name}.zip"
         zip_path = out_dir / zip_name
 
-        with zipfile.ZipFile(str(zip_path), 'w', zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(str(zip_path), "w", zipfile.ZIP_DEFLATED) as zf:
             for fp in skill_dir.rglob("*"):
                 if fp.is_file() and "__pycache__" not in str(fp):
                     zf.write(str(fp), str(fp.relative_to(skill_dir.parent)))
@@ -802,6 +852,7 @@ Gary Dev Agent Skill.
 
 _manager: Optional[SkillsManager] = None
 
+
 def _get_manager() -> SkillsManager:
     global _manager
     if _manager is None:
@@ -813,6 +864,7 @@ def skill_list() -> dict:
     """列出所有已安装的技能包"""
     return _get_manager().list_skills()
 
+
 def skill_install(source: str) -> dict:
     """
     安装技能包。支持：本地目录、.zip、.py 单文件、Git URL。
@@ -820,29 +872,36 @@ def skill_install(source: str) -> dict:
     """
     return _get_manager().install(source)
 
+
 def skill_uninstall(name: str) -> dict:
     """卸载技能包（删除文件）"""
     return _get_manager().uninstall(name)
+
 
 def skill_enable(name: str) -> dict:
     """启用已禁用的技能"""
     return _get_manager().enable(name)
 
+
 def skill_disable(name: str) -> dict:
     """禁用技能（保留文件，不加载）"""
     return _get_manager().disable(name)
+
 
 def skill_info(name: str) -> dict:
     """查看技能详细信息"""
     return _get_manager().info(name)
 
+
 def skill_create(name: str, description: str = "") -> dict:
     """创建新技能的标准模板目录"""
     return _get_manager().create_template(name, description)
 
+
 def skill_export(name: str, output_dir: str = None) -> dict:
     """导出技能为 .zip 文件，方便分享"""
     return _get_manager().export(name, output_dir)
+
 
 def skill_reload() -> dict:
     """重新加载所有技能（修改 tools.py 后使用）"""
@@ -852,15 +911,15 @@ def skill_reload() -> dict:
 # ── 工具注册表 ───────────────────────────────────────────────
 
 SKILL_TOOLS_MAP = {
-    "skill_list":      skill_list,
-    "skill_install":   skill_install,
+    "skill_list": skill_list,
+    "skill_install": skill_install,
     "skill_uninstall": skill_uninstall,
-    "skill_enable":    skill_enable,
-    "skill_disable":   skill_disable,
-    "skill_info":      skill_info,
-    "skill_create":    skill_create,
-    "skill_export":    skill_export,
-    "skill_reload":    skill_reload,
+    "skill_enable": skill_enable,
+    "skill_disable": skill_disable,
+    "skill_info": skill_info,
+    "skill_create": skill_create,
+    "skill_export": skill_export,
+    "skill_reload": skill_reload,
 }
 
 SKILL_TOOL_SCHEMAS = [
@@ -883,7 +942,10 @@ SKILL_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "source": {"type": "string", "description": "技能来源：目录路径 / .zip 路径 / .py 文件 / Git URL"},
+                    "source": {
+                        "type": "string",
+                        "description": "技能来源：目录路径 / .zip 路径 / .py 文件 / Git URL",
+                    },
                 },
                 "required": ["source"],
             },
@@ -984,6 +1046,7 @@ SKILL_TOOL_SCHEMAS = [
 # CLI 命令处理（供 stm32_agent.py 的 handle_builtin 调用）
 # ─────────────────────────────────────────────────────────────
 
+
 def handle_skill_command(args: str, agent=None) -> bool:
     """
     处理 /skill 命令。在 stm32_agent.py 的 handle_builtin 中调用：
@@ -1029,7 +1092,9 @@ def handle_skill_command(args: str, agent=None) -> bool:
             except Exception:
                 for s in r["skills"]:
                     flag = "●" if s["enabled"] else "○"
-                    CONSOLE.print(f"  {flag} {s['display_name']} v{s['version']} ({s['tools_count']} tools)")
+                    CONSOLE.print(
+                        f"  {flag} {s['display_name']} v{s['version']} ({s['tools_count']} tools)"
+                    )
         CONSOLE.print()
         return True
 
@@ -1080,7 +1145,9 @@ def handle_skill_command(args: str, agent=None) -> bool:
         r = mgr.info(subarg)
         if r["success"]:
             meta = r["meta"]
-            CONSOLE.print(f"  [bold cyan]{meta.get('display_name', meta.get('name'))}[/] v{meta.get('version')}")
+            CONSOLE.print(
+                f"  [bold cyan]{meta.get('display_name', meta.get('name'))}[/] v{meta.get('version')}"
+            )
             CONSOLE.print(f"  [dim]作者:[/] {meta.get('author', '未知')}")
             CONSOLE.print(f"  [dim]描述:[/] {meta.get('description', '')}")
             CONSOLE.print(f"  [dim]标签:[/] {', '.join(meta.get('tags', []))}")
@@ -1133,7 +1200,9 @@ def handle_skill_command(args: str, agent=None) -> bool:
 
     # 未知子命令
     CONSOLE.print(f"[yellow]  未知命令: /skill {subcmd}[/]")
-    CONSOLE.print("  可用: list | install | uninstall | enable | disable | info | create | export | reload | dir\n")
+    CONSOLE.print(
+        "  可用: list | install | uninstall | enable | disable | info | create | export | reload | dir\n"
+    )
     return True
 
 
@@ -1169,6 +1238,7 @@ def _hot_reload_agent(agent, mgr: SkillsManager):
 # ─────────────────────────────────────────────────────────────
 # 集成函数（在 stm32_agent.py 中调用一次即可）
 # ─────────────────────────────────────────────────────────────
+
 
 def init_skills(tools_map: dict = None, tool_schemas: list = None) -> SkillsManager:
     """
@@ -1211,11 +1281,26 @@ def init_skills(tools_map: dict = None, tool_schemas: list = None) -> SkillsMana
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Gary Skills Manager")
-    parser.add_argument("action", nargs="?", default="list",
-                        choices=["list", "install", "uninstall", "enable", "disable",
-                                 "info", "create", "export", "reload", "dir"],
-                        help="操作")
+    parser.add_argument(
+        "action",
+        nargs="?",
+        default="list",
+        choices=[
+            "list",
+            "install",
+            "uninstall",
+            "enable",
+            "disable",
+            "info",
+            "create",
+            "export",
+            "reload",
+            "dir",
+        ],
+        help="操作",
+    )
     parser.add_argument("target", nargs="?", default="", help="目标名称/路径")
     parser.add_argument("-d", "--description", default="", help="描述（create 时使用）")
     args = parser.parse_args()
@@ -1228,7 +1313,9 @@ if __name__ == "__main__":
         print(f"\n已安装 {r['total']} 个技能:\n")
         for s in r["skills"]:
             flag = "●" if s["enabled"] else "○"
-            print(f"  {flag} {s['display_name']:<24} v{s['version']:<8} {s['tools_count']} tools  {s['description'][:40]}")
+            print(
+                f"  {flag} {s['display_name']:<24} v{s['version']:<8} {s['tools_count']} tools  {s['description'][:40]}"
+            )
         print(f"\n技能目录: {SKILLS_DIR}\n")
 
     elif args.action == "install":

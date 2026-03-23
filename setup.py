@@ -25,8 +25,18 @@ Gary Dev Agent - 一键环境安装脚本
 
 # ── 防止被 pip/setuptools 误调用 ──────────────────────────────────────────────
 import sys as _sys
-_FORBIDDEN_ARGS = {"egg_info", "bdist_wheel", "sdist", "install", "develop",
-                   "build", "build_ext", "dist_info", "--version"}
+
+_FORBIDDEN_ARGS = {
+    "egg_info",
+    "bdist_wheel",
+    "sdist",
+    "install",
+    "develop",
+    "build",
+    "build_ext",
+    "dist_info",
+    "--version",
+}
 if len(_sys.argv) > 1 and _sys.argv[1] in _FORBIDDEN_ARGS:
     print("错误：本文件是 Gary Dev Agent 自定义安装脚本，不是 setuptools 包。")
     print("请直接运行：  python setup.py --auto")
@@ -54,10 +64,12 @@ if platform.system() == "Windows":
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     else:
         import io
+
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
     try:
         import ctypes
+
         kernel32 = ctypes.windll.kernel32
         handle = kernel32.GetStdHandle(-11)
         mode = ctypes.c_ulong()
@@ -71,25 +83,51 @@ if platform.system() == "Windows":
 # ─────────────────────────────────────────────────────────────────────────────
 _USE_COLOR = sys.stdout.isatty()
 
+
 def _c(code: str, text: str) -> str:
     return f"\033[{code}m{text}\033[0m" if _USE_COLOR else text
+
 
 def header(msg: str):
     print(f"\n{_c('1;35', '━' * 58)}")
     print(f"  {_c('1;35', msg)}")
     print(f"{_c('1;35', '━' * 58)}")
 
-def ok(msg: str):   print(f"  {_c('32', 'OK')} {msg}")
-def info(msg: str): print(f"  {_c('36', '->')} {msg}")
-def warn(msg: str): print(f"  {_c('33', '!!')} {msg}")
-def err(msg: str):  print(f"  {_c('31', 'XX')} {msg}")
-def step(msg: str): print(f"\n  {_c('1;36', '>>')} {msg}")
+
+def ok(msg: str):
+    print(f"  {_c('32', 'OK')} {msg}")
+
+
+def info(msg: str):
+    print(f"  {_c('36', '->')} {msg}")
+
+
+def warn(msg: str):
+    print(f"  {_c('33', '!!')} {msg}")
+
+
+def err(msg: str):
+    print(f"  {_c('31', 'XX')} {msg}")
+
+
+def step(msg: str):
+    print(f"\n  {_c('1;36', '>>')} {msg}")
+
 
 if platform.system() != "Windows":
-    def ok(msg: str):   print(f"  {_c('32', '✓')} {msg}")
-    def warn(msg: str): print(f"  {_c('33', '⚠')} {msg}")
-    def err(msg: str):  print(f"  {_c('31', '✗')} {msg}")
-    def step(msg: str): print(f"\n  {_c('1;36', '▶')} {msg}")
+
+    def ok(msg: str):
+        print(f"  {_c('32', '✓')} {msg}")
+
+    def warn(msg: str):
+        print(f"  {_c('33', '⚠')} {msg}")
+
+    def err(msg: str):
+        print(f"  {_c('31', '✗')} {msg}")
+
+    def step(msg: str):
+        print(f"\n  {_c('1;36', '▶')} {msg}")
+
 
 def ask(msg: str, default: str = "y") -> bool:
     yn = "Y/n" if default == "y" else "y/N"
@@ -100,41 +138,56 @@ def ask(msg: str, default: str = "y") -> bool:
         return default == "y"
     return (ans in ("y", "yes")) if ans else (default == "y")
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 平台 / 路径常量
 # ─────────────────────────────────────────────────────────────────────────────
-SYSTEM   = platform.system()
-MACHINE  = platform.machine()
+SYSTEM = platform.system()
+MACHINE = platform.machine()
 IS_LINUX = SYSTEM == "Linux"
-IS_MAC   = SYSTEM == "Darwin"
-IS_WIN   = SYSTEM == "Windows"
+IS_MAC = SYSTEM == "Darwin"
+IS_WIN = SYSTEM == "Windows"
 
-SCRIPT_DIR   = Path(__file__).parent.resolve()
-WORKSPACE    = SCRIPT_DIR / "workspace"
-HAL_DIR      = WORKSPACE  / "hal"
-BUILD_DIR    = WORKSPACE  / "build"
-PROJECTS_DIR = WORKSPACE  / "projects"
+SCRIPT_DIR = Path(__file__).parent.resolve()
+WORKSPACE = SCRIPT_DIR / "workspace"
+HAL_DIR = WORKSPACE / "hal"
+BUILD_DIR = WORKSPACE / "build"
+PROJECTS_DIR = WORKSPACE / "projects"
 AGENT_SCRIPT = SCRIPT_DIR / "stm32_agent.py"
 
 PIP = [sys.executable, "-m", "pip"]
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 工具函数
 # ─────────────────────────────────────────────────────────────────────────────
-def _run(cmd, shell=False, capture=True, input_text=None, timeout=None, **kw) -> subprocess.CompletedProcess:
+def _run(
+    cmd, shell=False, capture=True, input_text=None, timeout=None, **kw
+) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(cmd, shell=shell, capture_output=capture,
-                              text=True, input=input_text, timeout=timeout, **kw)
+        return subprocess.run(
+            cmd,
+            shell=shell,
+            capture_output=capture,
+            text=True,
+            input=input_text,
+            timeout=timeout,
+            **kw,
+        )
     except subprocess.TimeoutExpired:
         cmd_name = cmd[0] if isinstance(cmd, list) else str(cmd)
         warn(f"命令超时（>{timeout}s）: {cmd_name}")
         return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="timeout")
     except FileNotFoundError:
         cmd_name = cmd[0] if isinstance(cmd, list) else str(cmd)
-        return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr=f"{cmd_name}: not found")
+        return subprocess.CompletedProcess(
+            cmd, returncode=1, stdout="", stderr=f"{cmd_name}: not found"
+        )
+
 
 def _which(name: str) -> Optional[str]:
     return shutil.which(name)
+
 
 def _distro() -> tuple:
     try:
@@ -147,8 +200,10 @@ def _distro() -> tuple:
     except Exception:
         return "", ""
 
+
 def _download(url: str, dest: Path, label: str = "", retries: int = 3) -> bool:
     import urllib.request
+
     dest.parent.mkdir(parents=True, exist_ok=True)
     for attempt in range(1, retries + 1):
         try:
@@ -180,8 +235,10 @@ def _download(url: str, dest: Path, label: str = "", retries: int = 3) -> bool:
                 err(f"下载失败（已重试 {retries} 次）[{label}]: {e}")
     return False
 
+
 def _detect_zip_prefix(zip_path: Path) -> str:
     import zipfile
+
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
             names = zf.namelist()
@@ -191,8 +248,10 @@ def _detect_zip_prefix(zip_path: Path) -> str:
         pass
     return ""
 
+
 def _extract_zip(zip_path: Path, dest_dir: Path, sub_paths: List[str]) -> bool:
     import zipfile, shutil as _sh
+
     try:
         prefix = _detect_zip_prefix(zip_path)
         if not prefix:
@@ -204,7 +263,7 @@ def _extract_zip(zip_path: Path, dest_dir: Path, sub_paths: List[str]) -> bool:
                 for member in zf.namelist():
                     if not member.startswith(src_prefix):
                         continue
-                    rel = member[len(src_prefix):]
+                    rel = member[len(src_prefix) :]
                     if not rel or rel.endswith("/"):
                         continue
                     fname = Path(rel).name
@@ -219,43 +278,54 @@ def _extract_zip(zip_path: Path, dest_dir: Path, sub_paths: List[str]) -> bool:
         err(f"解压失败 {zip_path.name}: {e}")
         return False
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 0: AI 接口配置
 # ─────────────────────────────────────────────────────────────────────────────
 _AI_PRESETS = [
-    ("OpenAI",               "https://api.openai.com/v1",                                "gpt-4o"),
-    ("DeepSeek",             "https://api.deepseek.com/v1",                              "deepseek-chat"),
-    ("Kimi / Moonshot",      "https://api.moonshot.cn/v1",                               "kimi-k2.5"),
-    ("Google Gemini",        "https://generativelanguage.googleapis.com/v1beta/openai/", "gemini-2.0-flash"),
-    ("通义千问 (阿里云)",     "https://dashscope.aliyuncs.com/compatible-mode/v1",         "qwen-plus"),
-    ("智谱 GLM",             "https://open.bigmodel.cn/api/paas/v4/",                    "glm-4-flash"),
-    ("Ollama (本地无需Key)",  "http://127.0.0.1:11434/v1",                                "qwen2.5-coder:14b"),
-    ("自定义 / Other",        "",                                                          ""),
+    ("OpenAI", "https://api.openai.com/v1", "gpt-4o"),
+    ("DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat"),
+    ("Kimi / Moonshot", "https://api.moonshot.cn/v1", "kimi-k2.5"),
+    (
+        "Google Gemini",
+        "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "gemini-2.0-flash",
+    ),
+    ("通义千问 (阿里云)", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus"),
+    ("智谱 GLM", "https://open.bigmodel.cn/api/paas/v4/", "glm-4-flash"),
+    ("Ollama (本地无需Key)", "http://127.0.0.1:11434/v1", "qwen2.5-coder:14b"),
+    ("自定义 / Other", "", ""),
 ]
+
 
 def _read_current_ai_config() -> tuple:
     import re as _re
+
     p = SCRIPT_DIR / "config.py"
     if not p.exists():
         return "", "", ""
     text = p.read_text(encoding="utf-8")
+
     def _get(pattern):
         m = _re.search(pattern, text, _re.MULTILINE)
         return m.group(1).strip() if m else ""
+
     return (
         _get(r'^AI_API_KEY\s*=\s*["\']([^"\']*)["\']'),
         _get(r'^AI_BASE_URL\s*=\s*["\']([^"\']*)["\']'),
         _get(r'^AI_MODEL\s*=\s*["\']([^"\']*)["\']'),
     )
 
+
 def _write_ai_config(api_key: str, base_url: str, model: str) -> bool:
     import re as _re
+
     p = SCRIPT_DIR / "config.py"
     if not p.exists():
         p.write_text('AI_API_KEY = ""\nAI_BASE_URL = ""\nAI_MODEL = ""\n', encoding="utf-8")
     text = p.read_text(encoding="utf-8")
     for key, val in [("AI_API_KEY", api_key), ("AI_BASE_URL", base_url), ("AI_MODEL", model)]:
-        pattern = rf'^({key}\s*=\s*).*$'
+        pattern = rf"^({key}\s*=\s*).*$"
         if _re.search(pattern, text, flags=_re.MULTILINE):
             text = _re.sub(pattern, f'{key} = "{val}"', text, flags=_re.MULTILINE)
         else:
@@ -267,6 +337,7 @@ def _write_ai_config(api_key: str, base_url: str, model: str) -> bool:
         print(f"写入失败: {e}")
         return False
 
+
 def _mask_key(key: str) -> str:
     if not key:
         return "(未设置)"
@@ -274,8 +345,10 @@ def _mask_key(key: str) -> str:
         return "***"
     return key[:6] + "..." + key[-4:]
 
+
 def configure_ai(auto: bool):
     import getpass as _gp
+
     header("配置  AI 后端接口")
     cur_key, cur_url, cur_model = _read_current_ai_config()
     placeholder = ("YOUR_API_KEY", "sk-YOUR")
@@ -312,12 +385,17 @@ def configure_ai(auto: bool):
     idx = int(choice) - 1
     preset_name, preset_url, preset_model = _AI_PRESETS[idx]
 
-    base_url = preset_url if preset_url else input(
-        f"  {_c('33', '?')} Base URL (例: https://api.openai.com/v1): ").strip()
+    base_url = (
+        preset_url
+        if preset_url
+        else input(f"  {_c('33', '?')} Base URL (例: https://api.openai.com/v1): ").strip()
+    )
 
-    default_model = preset_model if preset_model else (cur_model if cur_model else "gemini-2.0-flash")
+    default_model = (
+        preset_model if preset_model else (cur_model if cur_model else "gemini-2.0-flash")
+    )
     hint = f" [{_c('36', default_model)}]"
-    
+
     entered = input(f"  {_c('33', '?')} Model 名称{hint} (回车使用默认): ").strip()
     model = entered if entered else default_model
 
@@ -349,19 +427,20 @@ def configure_ai(auto: bool):
     else:
         err("写入 config.py 失败")
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 0b: 目标芯片配置
 # ─────────────────────────────────────────────────────────────────────────────
 
 # (显示名, pyocd pack 代表芯片, 系列描述)
 _CHIP_PRESETS = [
-    ("STM32F103C8",  "stm32f103c8", "Blue Pill / 蓝板"),
+    ("STM32F103C8", "stm32f103c8", "Blue Pill / 蓝板"),
     ("STM32F411CEU", "stm32f411ce", "Black Pill / 黑板"),
-    ("STM32F407VE",  "stm32f407ve", "F407 Discovery"),
-    ("STM32F401CC",  "stm32f401cc", "F401 Black Pill"),
-    ("STM32F030C8",  "stm32f030c8", "F0xx 入门系列"),
-    ("STM32F303CC",  "stm32f303cc", "F3xx DSP/FPU 系列"),
-    ("自定义",        "",            "手动输入"),
+    ("STM32F407VE", "stm32f407ve", "F407 Discovery"),
+    ("STM32F401CC", "stm32f401cc", "F401 Black Pill"),
+    ("STM32F030C8", "stm32f030c8", "F0xx 入门系列"),
+    ("STM32F303CC", "stm32f303cc", "F3xx DSP/FPU 系列"),
+    ("自定义", "", "手动输入"),
 ]
 
 # 芯片系列 → pyocd pack 代表芯片（用于 pack install 和已装检测）
@@ -372,33 +451,42 @@ _FAMILY_PACK_TARGET = {
     "f4": "stm32f411ce",
 }
 
+
 def _detect_chip_family(chip: str) -> str:
     """从芯片型号推断系列，例如 STM32F411CEU6 → f4"""
     import re as _re
-    m = _re.search(r'stm32(f\d)', chip.lower())
+
+    m = _re.search(r"stm32(f\d)", chip.lower())
     return m.group(1) if m else ""
+
 
 def _read_default_chip() -> str:
     import re as _re
+
     p = SCRIPT_DIR / "config.py"
     if not p.exists():
         return ""
-    m = _re.search(r'^DEFAULT_CHIP\s*=\s*["\']([^"\']*)["\']', p.read_text(encoding="utf-8"), _re.MULTILINE)
+    m = _re.search(
+        r'^DEFAULT_CHIP\s*=\s*["\']([^"\']*)["\']', p.read_text(encoding="utf-8"), _re.MULTILINE
+    )
     return m.group(1).strip() if m else ""
+
 
 def _write_default_chip(chip: str) -> bool:
     import re as _re
+
     p = SCRIPT_DIR / "config.py"
     if not p.exists():
         return False
     text = p.read_text(encoding="utf-8")
-    pattern = r'^(DEFAULT_CHIP\s*=\s*).*$'
+    pattern = r"^(DEFAULT_CHIP\s*=\s*).*$"
     if _re.search(pattern, text, _re.MULTILINE):
         text = _re.sub(pattern, f'DEFAULT_CHIP = "{chip}"', text, flags=_re.MULTILINE)
     else:
         text += f'\nDEFAULT_CHIP = "{chip}"\n'
     p.write_text(text, encoding="utf-8")
     return True
+
 
 def configure_chip(auto: bool):
     header("Step 0b  目标芯片配置")
@@ -420,7 +508,9 @@ def configure_chip(auto: bool):
     valid = [str(i) for i in range(1, len(_CHIP_PRESETS) + 1)]
     while choice not in valid:
         try:
-            choice = input(f"  {_c('33', '?')} 输入序号 [1-{len(_CHIP_PRESETS)}，回车跳过]: ").strip()
+            choice = input(
+                f"  {_c('33', '?')} 输入序号 [1-{len(_CHIP_PRESETS)}，回车跳过]: "
+            ).strip()
         except (EOFError, KeyboardInterrupt):
             print()
             warn("已跳过芯片配置，可后续用 /chip 命令切换")
@@ -433,7 +523,9 @@ def configure_chip(auto: bool):
     chip_name, _, _ = _CHIP_PRESETS[idx]
     if chip_name == "自定义":
         try:
-            chip_name = input(f"  {_c('33', '?')} 输入芯片型号（如 STM32F411CEU6）: ").strip().upper()
+            chip_name = (
+                input(f"  {_c('33', '?')} 输入芯片型号（如 STM32F411CEU6）: ").strip().upper()
+            )
         except (EOFError, KeyboardInterrupt):
             print()
             return
@@ -445,6 +537,7 @@ def configure_chip(auto: bool):
     else:
         warn("写入失败，请手动修改 config.py 中的 DEFAULT_CHIP")
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 1: Python 版本
 # ─────────────────────────────────────────────────────────────────────────────
@@ -455,6 +548,7 @@ def check_python():
         err(f"需要 Python >= 3.8，当前 {v.major}.{v.minor}")
         sys.exit(1)
     ok(f"Python {v.major}.{v.minor}.{v.micro}  ({sys.executable})")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 2: arm-none-eabi 工具链
@@ -468,6 +562,7 @@ def _gcc_ver(gcc: str = "arm-none-eabi-gcc") -> str:
         pass
     return ""
 
+
 def install_arm_gcc(auto: bool):
     header("Step 2  ARM 交叉编译工具链")
     ver = _gcc_ver()
@@ -475,41 +570,81 @@ def install_arm_gcc(auto: bool):
         ok(f"已安装: {ver}")
         return
     warn("未检测到 arm-none-eabi-gcc")
-    if IS_LINUX:   _arm_gcc_linux(auto)
-    elif IS_MAC:   _arm_gcc_mac(auto)
-    elif IS_WIN:   _arm_gcc_win(auto)
-    else:          warn(f"未知平台 {SYSTEM}，请手动安装")
+    if IS_LINUX:
+        _arm_gcc_linux(auto)
+    elif IS_MAC:
+        _arm_gcc_mac(auto)
+    elif IS_WIN:
+        _arm_gcc_win(auto)
+    else:
+        warn(f"未知平台 {SYSTEM}，请手动安装")
     ver2 = _gcc_ver()
     if ver2:
         ok(f"安装成功: {ver2}")
     else:
         warn("安装后仍未找到，请重新打开终端再试（PATH 可能尚未生效）")
 
+
 def _arm_gcc_linux(auto: bool):
     dist_id, dist_like = _distro()
-    is_deb  = dist_id in ("ubuntu","debian","linuxmint","pop","elementary","raspbian") or "debian" in dist_like or "ubuntu" in dist_like
-    is_arch = dist_id in ("arch","manjaro","endeavouros","artix") or "arch" in dist_like
-    is_rpm  = dist_id in ("fedora","rhel","centos","rocky","almalinux") or "fedora" in dist_like or "rhel" in dist_like
+    is_deb = (
+        dist_id in ("ubuntu", "debian", "linuxmint", "pop", "elementary", "raspbian")
+        or "debian" in dist_like
+        or "ubuntu" in dist_like
+    )
+    is_arch = dist_id in ("arch", "manjaro", "endeavouros", "artix") or "arch" in dist_like
+    is_rpm = (
+        dist_id in ("fedora", "rhel", "centos", "rocky", "almalinux")
+        or "fedora" in dist_like
+        or "rhel" in dist_like
+    )
     is_suse = "suse" in dist_id or "suse" in dist_like
     if is_deb:
         if auto or ask("使用 apt 安装 gcc-arm-none-eabi？"):
             _run(["sudo", "apt-get", "update", "-qq"], capture=False)
-            r = _run(["sudo", "apt-get", "install", "-y", "gcc-arm-none-eabi", "binutils-arm-none-eabi"], capture=False)
+            r = _run(
+                ["sudo", "apt-get", "install", "-y", "gcc-arm-none-eabi", "binutils-arm-none-eabi"],
+                capture=False,
+            )
             if r.returncode != 0:
                 warn("apt 失败，改为下载预编译包...")
                 _arm_gcc_download(auto)
     elif is_arch:
         if auto or ask("使用 pacman 安装？"):
-            _run(["sudo", "pacman", "-S", "--noconfirm", "arm-none-eabi-gcc", "arm-none-eabi-binutils"], capture=False)
+            _run(
+                [
+                    "sudo",
+                    "pacman",
+                    "-S",
+                    "--noconfirm",
+                    "arm-none-eabi-gcc",
+                    "arm-none-eabi-binutils",
+                ],
+                capture=False,
+            )
     elif is_rpm:
         pm = "dnf" if _which("dnf") else "yum"
         if auto or ask(f"使用 {pm} 安装？"):
-            _run(["sudo", pm, "install", "-y", "arm-none-eabi-gcc-cs", "arm-none-eabi-binutils-cs"], capture=False)
+            _run(
+                ["sudo", pm, "install", "-y", "arm-none-eabi-gcc-cs", "arm-none-eabi-binutils-cs"],
+                capture=False,
+            )
     elif is_suse:
         if auto or ask("使用 zypper 安装？"):
-            _run(["sudo", "zypper", "install", "-y", "cross-arm-none-eabi-gcc", "cross-arm-none-eabi-binutils"], capture=False)
+            _run(
+                [
+                    "sudo",
+                    "zypper",
+                    "install",
+                    "-y",
+                    "cross-arm-none-eabi-gcc",
+                    "cross-arm-none-eabi-binutils",
+                ],
+                capture=False,
+            )
     else:
         _arm_gcc_download(auto)
+
 
 def _arm_gcc_mac(auto: bool):
     if _which("brew"):
@@ -518,16 +653,33 @@ def _arm_gcc_mac(auto: bool):
     else:
         warn("未检测到 Homebrew")
         if auto or ask("先安装 Homebrew 再装工具链？"):
-            _run(["/bin/bash", "-c", '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'], capture=False)
+            _run(
+                [
+                    "/bin/bash",
+                    "-c",
+                    '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"',
+                ],
+                capture=False,
+            )
             _run(["brew", "install", "arm-none-eabi-gcc"], capture=False)
         else:
             _arm_gcc_download(auto)
 
+
 def _arm_gcc_win(auto: bool):
     if _which("winget"):
         if auto or ask("使用 winget 安装 Arm GNU Toolchain？"):
-            _run(["winget", "install", "--id", "Arm.GnuArmEmbeddedToolchain",
-                  "--accept-source-agreements", "--accept-package-agreements"], capture=False)
+            _run(
+                [
+                    "winget",
+                    "install",
+                    "--id",
+                    "Arm.GnuArmEmbeddedToolchain",
+                    "--accept-source-agreements",
+                    "--accept-package-agreements",
+                ],
+                capture=False,
+            )
         return
     if _which("choco"):
         if auto or ask("使用 Chocolatey 安装？"):
@@ -535,16 +687,36 @@ def _arm_gcc_win(auto: bool):
         return
     _arm_gcc_download(auto)
 
+
 def _arm_gcc_download(auto: bool):
     URLS = {
-        ("linux",   "x86_64"):  "https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-x86_64-arm-none-eabi.tar.xz",
-        ("linux",   "aarch64"): "https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-aarch64-arm-none-eabi.tar.xz",
-        ("darwin",  "x86_64"):  "https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-darwin-x86_64-arm-none-eabi.tar.xz",
-        ("darwin",  "arm64"):   "https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-darwin-arm64-arm-none-eabi.tar.xz",
-        ("windows", "x86_64"):  "https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-mingw-w64-i686-arm-none-eabi.zip",
+        (
+            "linux",
+            "x86_64",
+        ): "https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-x86_64-arm-none-eabi.tar.xz",
+        (
+            "linux",
+            "aarch64",
+        ): "https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-aarch64-arm-none-eabi.tar.xz",
+        (
+            "darwin",
+            "x86_64",
+        ): "https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-darwin-x86_64-arm-none-eabi.tar.xz",
+        (
+            "darwin",
+            "arm64",
+        ): "https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-darwin-arm64-arm-none-eabi.tar.xz",
+        (
+            "windows",
+            "x86_64",
+        ): "https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-mingw-w64-i686-arm-none-eabi.zip",
     }
     sys_k = SYSTEM.lower()
-    arch_k = "arm64" if MACHINE.lower() == "arm64" else "aarch64" if "aarch" in MACHINE.lower() else "x86_64"
+    arch_k = (
+        "arm64"
+        if MACHINE.lower() == "arm64"
+        else "aarch64" if "aarch" in MACHINE.lower() else "x86_64"
+    )
     url = URLS.get((sys_k, arch_k))
     if not url:
         warn("没有适合此平台的预编译包")
@@ -555,6 +727,7 @@ def _arm_gcc_download(auto: bool):
         info("已跳过，请手动安装")
         return
     import tempfile, tarfile, zipfile
+
     tmp = Path(tempfile.mkdtemp())
     fmt = "zip" if url.endswith(".zip") else "tar.xz"
     archive = tmp / f"arm-toolchain.{fmt}"
@@ -566,7 +739,11 @@ def _arm_gcc_download(auto: bool):
         if fmt == "tar.xz":
             with tarfile.open(archive, "r:xz") as tf:
                 tf.extractall(install_dir.parent)
-            extracted = [d for d in install_dir.parent.iterdir() if d.is_dir() and "arm-gnu-toolchain" in d.name]
+            extracted = [
+                d
+                for d in install_dir.parent.iterdir()
+                if d.is_dir() and "arm-gnu-toolchain" in d.name
+            ]
             if extracted:
                 if install_dir.exists():
                     shutil.rmtree(install_dir)
@@ -584,9 +761,12 @@ def _arm_gcc_download(auto: bool):
         ok(f"工具链已安装：{install_dir}")
     shutil.rmtree(tmp, ignore_errors=True)
 
+
 def _add_to_path(new_path: str):
     home = Path.home()
-    candidates = [home / ".zshrc", home / ".bash_profile"] if IS_MAC else [home / ".bashrc", home / ".zshrc"]
+    candidates = (
+        [home / ".zshrc", home / ".bash_profile"] if IS_MAC else [home / ".bashrc", home / ".zshrc"]
+    )
     line = f'\nexport PATH="{new_path}:$PATH"  # arm-none-eabi\n'
     for sh in candidates:
         if sh.exists():
@@ -596,21 +776,23 @@ def _add_to_path(new_path: str):
             info(f"  PATH 已写入 {sh}")
             return
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 3: Python 依赖包
 # ─────────────────────────────────────────────────────────────────────────────
 PYTHON_PKGS = [
-    ("openai",         "openai",         True),
-    ("rich",           "rich",           True),
+    ("openai", "openai", True),
+    ("rich", "rich", True),
     ("prompt_toolkit", "prompt_toolkit", True),
-    ("pyocd",          "pyocd",          True),
-    ("serial",         "pyserial",       True),
-    ("requests",       "requests",       True),
-    ("bs4",            "beautifulsoup4", False),
-    ("docx",           "python-docx",    False),
-    ("PIL",            "Pillow",         True),
-    ("pyautogui",      "pyautogui",      False),
+    ("pyocd", "pyocd", True),
+    ("serial", "pyserial", True),
+    ("requests", "requests", True),
+    ("bs4", "beautifulsoup4", False),
+    ("docx", "python-docx", False),
+    ("PIL", "Pillow", True),
+    ("pyautogui", "pyautogui", False),
 ]
+
 
 def install_python_packages(auto: bool):
     header("Step 3  Python 依赖包")
@@ -618,13 +800,15 @@ def install_python_packages(auto: bool):
     missing_req, missing_opt = [], []
     for imp, pkg, required in PYTHON_PKGS:
         try:
-            __import__(imp); ok(f"{pkg}")
+            __import__(imp)
+            ok(f"{pkg}")
         except ImportError:
             (missing_req if required else missing_opt).append(pkg)
             warn(f"{pkg}  {'[必须]' if required else '[可选]'}")
     to_install = missing_req + missing_opt
     if not to_install:
-        ok("所有依赖已就绪"); return
+        ok("所有依赖已就绪")
+        return
     prompt = f"安装 {len(missing_req)} 个必需包"
     if missing_opt:
         prompt += f" + {len(missing_opt)} 个可选包"
@@ -637,41 +821,58 @@ def install_python_packages(auto: bool):
     elif missing_req:
         info(f"必须包未安装：{missing_req}")
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 4: 工作区目录
 # ─────────────────────────────────────────────────────────────────────────────
 def create_workspace():
     header("Step 4  工作区目录")
-    for d in [HAL_DIR / "Inc", HAL_DIR / "Src", HAL_DIR / "CMSIS" / "Include", BUILD_DIR, PROJECTS_DIR]:
+    for d in [
+        HAL_DIR / "Inc",
+        HAL_DIR / "Src",
+        HAL_DIR / "CMSIS" / "Include",
+        BUILD_DIR,
+        PROJECTS_DIR,
+    ]:
         d.mkdir(parents=True, exist_ok=True)
     ok(f"workspace -> {WORKSPACE}")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 5: STM32 HAL 库
 # ─────────────────────────────────────────────────────────────────────────────
 HAL_REPOS = {
-    "f0": ("https://github.com/STMicroelectronics/stm32f0xx-hal-driver/archive/refs/heads/master.zip",
-           "https://github.com/STMicroelectronics/cmsis_device_f0/archive/refs/heads/master.zip"),
-    "f1": ("https://github.com/STMicroelectronics/stm32f1xx-hal-driver/archive/refs/heads/master.zip",
-           "https://github.com/STMicroelectronics/cmsis_device_f1/archive/refs/heads/master.zip"),
-    "f3": ("https://github.com/STMicroelectronics/stm32f3xx-hal-driver/archive/refs/heads/master.zip",
-           "https://github.com/STMicroelectronics/cmsis_device_f3/archive/refs/heads/master.zip"),
-    "f4": ("https://github.com/STMicroelectronics/stm32f4xx-hal-driver/archive/refs/heads/master.zip",
-           "https://github.com/STMicroelectronics/cmsis_device_f4/archive/refs/heads/master.zip"),
+    "f0": (
+        "https://github.com/STMicroelectronics/stm32f0xx-hal-driver/archive/refs/heads/master.zip",
+        "https://github.com/STMicroelectronics/cmsis_device_f0/archive/refs/heads/master.zip",
+    ),
+    "f1": (
+        "https://github.com/STMicroelectronics/stm32f1xx-hal-driver/archive/refs/heads/master.zip",
+        "https://github.com/STMicroelectronics/cmsis_device_f1/archive/refs/heads/master.zip",
+    ),
+    "f3": (
+        "https://github.com/STMicroelectronics/stm32f3xx-hal-driver/archive/refs/heads/master.zip",
+        "https://github.com/STMicroelectronics/cmsis_device_f3/archive/refs/heads/master.zip",
+    ),
+    "f4": (
+        "https://github.com/STMicroelectronics/stm32f4xx-hal-driver/archive/refs/heads/master.zip",
+        "https://github.com/STMicroelectronics/cmsis_device_f4/archive/refs/heads/master.zip",
+    ),
 }
 
 CMSIS_CORE_FILES = {
-    "core_cm0.h":       "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/core_cm0.h",
-    "core_cm0plus.h":   "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/core_cm0plus.h",
-    "core_cm3.h":       "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/core_cm3.h",
-    "core_cm4.h":       "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/core_cm4.h",
-    "cmsis_version.h":  "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/cmsis_version.h",
+    "core_cm0.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/core_cm0.h",
+    "core_cm0plus.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/core_cm0plus.h",
+    "core_cm3.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/core_cm3.h",
+    "core_cm4.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/core_cm4.h",
+    "cmsis_version.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/cmsis_version.h",
     "cmsis_compiler.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/cmsis_compiler.h",
-    "cmsis_gcc.h":      "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/cmsis_gcc.h",
-    "cmsis_armcc.h":    "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/cmsis_armcc.h",
+    "cmsis_gcc.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/cmsis_gcc.h",
+    "cmsis_armcc.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/cmsis_armcc.h",
     "cmsis_armclang.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/cmsis_armclang.h",
-    "mpu_armv7.h":      "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/mpu_armv7.h",
+    "mpu_armv7.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/mpu_armv7.h",
 }
+
 
 def download_hal(auto: bool, families: List[str] = None):
     header("Step 5  STM32 HAL 库")
@@ -699,6 +900,7 @@ def download_hal(auto: bool, families: List[str] = None):
             return
 
     import tempfile
+
     tmp = Path(tempfile.mkdtemp(prefix="stm32_hal_"))
     try:
         for fam in missing:
@@ -721,6 +923,7 @@ def download_hal(auto: bool, families: List[str] = None):
 
     ok("HAL 库下载完成")
 
+
 def _download_cmsis_core():
     step("ARM CMSIS Core 头文件...")
     dst_dir = HAL_DIR / "CMSIS" / "Include"
@@ -737,6 +940,7 @@ def _download_cmsis_core():
         info("  可手动下载: https://github.com/ARM-software/CMSIS_5/tree/5.9.0/CMSIS/Core/Include")
     else:
         ok(f"  ARM CMSIS Core ({len(CMSIS_CORE_FILES)} 个头文件)")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 5b: FreeRTOS Kernel 下载（RTOS 开发可选）
@@ -761,11 +965,14 @@ def download_freertos(auto: bool):
         ok(f"FreeRTOS Kernel 已就绪: {rtos_kernel_dir}")
         return
 
-    if not (auto or ask("下载 FreeRTOS Kernel（RTOS 多任务开发必需，裸机项目可跳过）？", default="n")):
+    if not (
+        auto or ask("下载 FreeRTOS Kernel（RTOS 多任务开发必需，裸机项目可跳过）？", default="n")
+    ):
         info("已跳过，裸机（无 RTOS）模式不受影响")
         return
 
     import tempfile, zipfile as _zf
+
     tmp = Path(tempfile.mkdtemp(prefix="freertos_"))
     try:
         zip_path = tmp / "freertos_kernel.zip"
@@ -807,6 +1014,7 @@ ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", MODE="0666", GROUP="dialout"
 ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", MODE="0666", GROUP="dialout"
 """
 
+
 def setup_udev(auto: bool):
     if not IS_LINUX:
         return
@@ -836,14 +1044,17 @@ def setup_udev(auto: bool):
     except Exception as e:
         warn(f"udev 设置失败: {e}")
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 7: pyocd 支持包
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _pyocd_installed_targets() -> str:
     """返回已安装目标列表（小写），失败返回空字符串"""
     r = _run([sys.executable, "-m", "pyocd", "list", "--targets"], timeout=30)
     return r.stdout.lower() if r.returncode == 0 else ""
+
 
 def _build_pack_list() -> list:
     """
@@ -866,10 +1077,12 @@ def _build_pack_list() -> list:
             ("stm32f411ce", "stm32f411ce", "STM32F4xx 支持包"),
         ]
 
+
 def setup_pyocd(auto: bool):
     header("Step 7  pyocd 芯片支持包（可选）")
     try:
         import pyocd
+
         ok(f"pyocd {pyocd.__version__}")
     except ImportError:
         warn("pyocd 未安装，跳过（请先完成 Step 3）")
@@ -900,8 +1113,11 @@ def setup_pyocd(auto: bool):
     failed = []
     for install_chip, label in missing:
         info(f"安装 {label}...")
-        r = _run([sys.executable, "-m", "pyocd", "pack", "install", install_chip],
-                 capture=False, timeout=180)
+        r = _run(
+            [sys.executable, "-m", "pyocd", "pack", "install", install_chip],
+            capture=False,
+            timeout=180,
+        )
         if install_chip in _pyocd_installed_targets():
             ok(f"{label}安装成功")
         else:
@@ -913,6 +1129,7 @@ def setup_pyocd(auto: bool):
     else:
         ok("pyocd 芯片支持包安装完成")
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 8: 安装 gary 命令
 # ─────────────────────────────────────────────────────────────────────────────
@@ -920,7 +1137,9 @@ def _ensure_unix_path(bin_dir: Path):
     if str(bin_dir) in os.environ.get("PATH", ""):
         return
     home = Path.home()
-    candidates = [home / ".zshrc", home / ".bash_profile"] if IS_MAC else [home / ".bashrc", home / ".zshrc"]
+    candidates = (
+        [home / ".zshrc", home / ".bash_profile"] if IS_MAC else [home / ".bashrc", home / ".zshrc"]
+    )
     line = '\nexport PATH="$HOME/.local/bin:$PATH"  # gary command\n'
     for sh in candidates:
         if sh.exists():
@@ -967,6 +1186,7 @@ if "%1"=="do" (
 )
 """
 
+
 def install_gary_command(auto: bool):
     header("Step 8  安装 gary 命令")
     if not AGENT_SCRIPT.exists():
@@ -977,13 +1197,11 @@ def install_gary_command(auto: bool):
     else:
         _install_gary_unix(auto)
 
+
 def _install_gary_unix(auto: bool):
     install_dir = Path.home() / ".local" / "bin"
     gary_path = install_dir / "gary"
-    expected_content = _GARY_SH.format(
-        agent_script=str(AGENT_SCRIPT),
-        python=sys.executable
-    )
+    expected_content = _GARY_SH.format(agent_script=str(AGENT_SCRIPT), python=sys.executable)
 
     if gary_path.exists():
         existing = gary_path.read_text(encoding="utf-8", errors="ignore")
@@ -1003,13 +1221,11 @@ def _install_gary_unix(auto: bool):
     ok(f"gary 命令已安装: {gary_path}")
     _ensure_unix_path(install_dir)
 
+
 def _install_gary_win(auto: bool):
     install_dir = _get_win_install_dir()
     gary_bat = install_dir / "gary.bat"
-    expected_content = _GARY_BAT.format(
-        agent_script=str(AGENT_SCRIPT),
-        python=sys.executable
-    )
+    expected_content = _GARY_BAT.format(agent_script=str(AGENT_SCRIPT), python=sys.executable)
 
     if gary_bat.exists():
         existing = gary_bat.read_text(encoding="utf-8", errors="ignore")
@@ -1035,6 +1251,8 @@ def _install_gary_win(auto: bool):
         info("请手动在 PowerShell 中执行：")
         info(f'  New-Item -Path "{install_dir}" -ItemType Directory -Force')
         info(f'  Set-Content "{gary_bat}" \'@echo off\\n"{sys.executable}" "{AGENT_SCRIPT}" %*\'')
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 9: 最终验证
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1066,7 +1284,8 @@ def verify():
     pkg_ok = {}
     for imp, pkg, required in PYTHON_PKGS:
         try:
-            __import__(imp); ok(f"Python: {pkg}")
+            __import__(imp)
+            ok(f"Python: {pkg}")
             pkg_ok[pkg] = True
         except Exception:
             (warn if not required else err)(f"Python: {pkg}  {'[必须]' if required else '[可选]'}")
@@ -1076,9 +1295,12 @@ def verify():
     # HAL
     hal_any = False
     for fam in HAL_REPOS:
-        hal_h   = HAL_DIR / "Inc" / f"stm32{fam}xx_hal.h"
-        src_cnt = len(list((HAL_DIR / "Src").glob(f"stm32{fam}xx_hal*.c"))) \
-                  if (HAL_DIR / "Src").exists() else 0
+        hal_h = HAL_DIR / "Inc" / f"stm32{fam}xx_hal.h"
+        src_cnt = (
+            len(list((HAL_DIR / "Src").glob(f"stm32{fam}xx_hal*.c")))
+            if (HAL_DIR / "Src").exists()
+            else 0
+        )
         if hal_h.exists():
             ok(f"HAL: stm32{fam}xx  ({src_cnt} 个源文件)")
             hal_any = True
@@ -1125,6 +1347,7 @@ def verify():
             print(_c("33", "    - HAL 库未安装 -> 仅语法检查模式"))
     print()
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 主入口
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1134,20 +1357,27 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--auto",  action="store_true", help="全自动，不询问")
+    parser.add_argument("--auto", action="store_true", help="全自动，不询问")
     parser.add_argument("--check", action="store_true", help="仅检查环境")
-    parser.add_argument("--hal",   nargs="*",           help="仅下载 HAL（可选: f0 f1 f3 f4）")
-    parser.add_argument("--rtos",  action="store_true", help="仅下载 FreeRTOS Kernel")
+    parser.add_argument("--hal", nargs="*", help="仅下载 HAL（可选: f0 f1 f3 f4）")
+    parser.add_argument("--rtos", action="store_true", help="仅下载 FreeRTOS Kernel")
     args = parser.parse_args()
 
-    print(_c("1;35", """
+    print(
+        _c(
+            "1;35",
+            """
   +================================================+
   |      Gary Dev Agent  -  一键环境安装           |
   |  STM32 AI 嵌入式开发助手  跨平台部署脚本       |
-  +================================================+"""))
-    print(f"  平台: {_c('36', f'{SYSTEM} {MACHINE}')}  |  "
-          f"Python: {_c('36', sys.version.split()[0])}  |  "
-          f"目录: {_c('36', str(SCRIPT_DIR))}")
+  +================================================+""",
+        )
+    )
+    print(
+        f"  平台: {_c('36', f'{SYSTEM} {MACHINE}')}  |  "
+        f"Python: {_c('36', sys.version.split()[0])}  |  "
+        f"目录: {_c('36', str(SCRIPT_DIR))}"
+    )
 
     try:
         if args.check:
@@ -1187,12 +1417,14 @@ def main():
     except Exception as e:
         err(f"安装过程出错: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         # Windows 下双击运行时保持窗口不自动关闭
         if IS_WIN and sys.stdin and sys.stdin.isatty():
             print()
             input("  按回车键关闭窗口...")
+
 
 if __name__ == "__main__":
     main()
