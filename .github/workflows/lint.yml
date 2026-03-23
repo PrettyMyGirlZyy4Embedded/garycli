@@ -1,0 +1,33 @@
+name: Lint & Format
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    name: Python Lint & Format Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install lint tools
+        run: |
+          pip install black flake8
+
+      - name: Check formatting with black
+        run: |
+          black --check --diff . --line-length 100
+
+      - name: Lint with flake8
+        run: |
+          flake8 . --max-line-length=100 --exclude=.venv,__pycache__,*.egg-info
