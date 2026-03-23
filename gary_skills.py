@@ -1240,7 +1240,11 @@ def _hot_reload_agent(agent, mgr: SkillsManager):
 # ─────────────────────────────────────────────────────────────
 
 
-def init_skills(tools_map: dict = None, tool_schemas: list = None) -> SkillsManager:
+def init_skills(
+    tools_map: dict = None,
+    tool_schemas: list = None,
+    announce: bool = True,
+) -> SkillsManager:
     """
     初始化技能系统。在 stm32_agent.py 启动时调用：
 
@@ -1259,7 +1263,8 @@ def init_skills(tools_map: dict = None, tool_schemas: list = None) -> SkillsMana
     ```
     """
     mgr = _get_manager()
-    CONSOLE.print("[dim]  加载技能包...[/]")
+    if announce:
+        CONSOLE.print("[dim]  加载技能包...[/]")
     mgr.load_all()
 
     if tools_map is not None:

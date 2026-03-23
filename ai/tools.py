@@ -1027,7 +1027,7 @@ for _name, _handler in SKILL_TOOLS_MAP.items():
     register_tool(_name, _handler)
 for _schema in SKILL_TOOL_SCHEMAS:
     _ensure_schema(_schema)
-init_skills(TOOLS_MAP, TOOL_SCHEMAS)
+init_skills(TOOLS_MAP, TOOL_SCHEMAS, announce=False)
 
 
 __all__ = [
