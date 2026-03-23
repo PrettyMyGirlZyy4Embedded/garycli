@@ -78,6 +78,23 @@ from core.memory import (
     gary_save_member_memory,
 )
 from core.state import get_context
+from hardware.serial_mon import (
+    SerialMonitor,
+    connect_serial,
+    detect_serial_ports,
+    disconnect_serial,
+    read_serial_output,
+    wait_serial_adaptive,
+)
+from hardware.swd import (
+    PyOCDBridge,
+    connect_swd,
+    disconnect_swd,
+    flash_via_swd,
+    list_probes as list_swd_probes,
+    read_registers,
+)
+from hardware.uart_isp import flash_via_uart
 from integrations.telegram import (
     configure_telegram_integration,
     get_telegram_target_candidates,
@@ -330,656 +347,7 @@ def _reg_map(family: str) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────
-# PyOCDBridge（替换 OpenOCD）
-# ─────────────────────────────────────────────────────────────
-class PyOCDBridge:
-    """
-    使用 pyocd Python 库直接控制 STM32（无需启动 openocd 进程）。
-    支持所有 CMSIS-DAP / ST-Link / J-Link USB 探针。
-    安装：pip install pyocd
-    """
-
-    def __init__(self):
-        self._session = None
-        self._target = None
-        self.connected = False
-        self.chip_info: dict = {}
-        self._family = "f1"
-        self._reg_map: dict = _reg_map("f1")
-
-    # ---- 内部工具 ----
-    def _chip_to_pyocd_target(self, chip: str) -> str:
-        """将 STM32F103C8T6 → stm32f103c8（去掉封装+温度后缀）"""
-        import re
-
-        name = chip.lower().strip()
-        # STM32 命名末尾：封装字母(T/U/H/Y) + 温度等级数字(3/6/7)，如 T6/U3/H7
-        name = re.sub(r"[a-z]\d$", "", name)
-        return name
-
-    _pyocd_target_cache: Optional[tuple] = None  # (float, set)
-    _CACHE_TTL = 60.0  # 秒
-
-    @classmethod
-    def _get_all_pyocd_targets(cls) -> set:
-        """获取所有可用 pyocd 目标，60秒内复用缓存"""
-        now = time.time()
-        if cls._pyocd_target_cache is not None:
-            ts, cached = cls._pyocd_target_cache
-            if now - ts < cls._CACHE_TTL:
-                return cached
-
-        try:
-            result = subprocess.run(
-                [sys.executable, "-m", "pyocd", "list", "--targets"],
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            known = set()
-            for line in result.stdout.splitlines():
-                parts = line.split()
-                if parts and parts[0].startswith("stm32"):
-                    known.add(parts[0].lower())
-            cls._pyocd_target_cache = (now, known)
-            return known
-        except Exception:
-            return set()
-
-    def _resolve_best_target(self, target_name: str) -> str:
-        """在 pyocd 所有可用目标（builtin + pack）中找最佳匹配（精确→前缀→截短）"""
-        known = self._get_all_pyocd_targets()
-
-        # 若子进程查询失败，降级到 TARGET 字典
-        if not known:
-            try:
-                from pyocd.target import TARGET
-
-                known = {k.lower() for k in TARGET}
-            except ImportError:
-                return target_name
-
-        # 1. 精确匹配
-        if target_name in known:
-            return target_name
-
-        # 2. 前缀匹配：target_name 是 known 中某目标的前缀（不太可能，但防御性保留）
-        candidates = [k for k in known if k.startswith(target_name)]
-        if candidates:
-            best = max(candidates, key=lambda k: len(os.path.commonprefix([target_name, k])))
-            CONSOLE.print(f"[yellow]  目标映射: {target_name} → {best}[/]")
-            return best
-
-        # 3. 截短搜索：逐位去尾，找相同系列最接近的目标
-        for trim in range(1, 4):
-            prefix = target_name[:-trim]
-            if len(prefix) < 8:  # stm32fXX 最短前缀
-                break
-            candidates = [k for k in known if k.startswith(prefix)]
-            if candidates:
-                best = max(candidates, key=lambda k: len(os.path.commonprefix([target_name, k])))
-                CONSOLE.print(f"[yellow]  目标近似匹配: {target_name} → {best}[/]")
-                return best
-
-        return target_name  # 未找到，原样返回让 pyocd 报错
-
-    def _auto_install_pack(self, target_name: str) -> bool:
-        """自动安装 pyocd CMSIS pack，返回是否成功"""
-        CONSOLE.print(f"[yellow]  未找到目标 {target_name}，正在自动安装支持包...[/]")
-        try:
-            result = subprocess.run(
-                [sys.executable, "-m", "pyocd", "pack", "install", target_name],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if result.returncode == 0:
-                CONSOLE.print(f"[green]  支持包安装成功[/]")
-                return True
-            else:
-                CONSOLE.print(f"[red]  支持包安装失败: {result.stderr.strip()}[/]")
-                return False
-        except Exception as e:
-            CONSOLE.print(f"[red]  支持包安装出错: {e}[/]")
-            return False
-
-    def _detect_family(self, chip: str) -> str:
-        chip_up = chip.upper()
-        if "F0" in chip_up:
-            return "f0"
-        if "F3" in chip_up:
-            return "f3"
-        if "F4" in chip_up or "F7" in chip_up or "H7" in chip_up:
-            return "f4"
-        return "f1"
-
-    def set_family(self, family: str):
-        self._family = family
-        self._reg_map = _reg_map(family)
-
-    # ---- 连接 / 断开 ----
-    def start(self, chip: str = DEFAULT_CHIP) -> bool:
-        """连接第一个可用探针，成功返回 True"""
-        self.stop()
-        try:
-            from pyocd.core.helpers import ConnectHelper
-        except ImportError:
-            CONSOLE.print("[red]pyocd 未安装，请运行: pip install pyocd[/]")
-            return False
-
-        # chip 为 None 时让 pyocd 自动检测目标
-        explicit_chip = chip and chip.upper() != "AUTO"
-        family = self._detect_family(chip) if explicit_chip else "f1"
-        self.set_family(family)
-
-        if explicit_chip:
-            raw_target = self._chip_to_pyocd_target(chip)
-            # 在已知目标库中找最佳匹配（精确→前缀→截短）
-            target_name = self._resolve_best_target(raw_target)
-        else:
-            target_name = None
-
-        probe_hint = f"目标: {target_name}" if target_name else "自动检测目标"
-        CONSOLE.print(f"[dim]  连接探针（{probe_hint}）...[/]")
-
-        def _do_connect(t_name):
-            return ConnectHelper.session_with_chosen_probe(
-                target_override=t_name,
-                auto_unlock=True,
-                connect_mode="halt",
-                blocking=False,
-                return_first=True,
-                options={"frequency": 1000000},
-            )
-
-        try:
-            self._session = _do_connect(target_name)
-        except Exception as e:
-            err_str = str(e)
-            # 目标不认识 → 自动安装 pack 后重试一次
-            if explicit_chip and ("not recognized" in err_str or "Target type" in err_str):
-                raw_target = self._chip_to_pyocd_target(chip)
-                if self._auto_install_pack(raw_target):
-                    # pack 安装后重新解析（新 session 会扫描已安装 pack）
-                    target_name = self._resolve_best_target(raw_target)
-                    CONSOLE.print(f"[dim]  重新连接（{target_name}）...[/]")
-                    try:
-                        self._session = _do_connect(target_name)
-                    except Exception as e2:
-                        CONSOLE.print(f"[red]  连接失败: {e2}[/]")
-                        self._session = None
-                        self._target = None
-                        return False
-                else:
-                    CONSOLE.print(f"[red]  连接失败: {e}[/]")
-                    self._session = None
-                    self._target = None
-                    return False
-            else:
-                CONSOLE.print(f"[red]  连接失败: {e}[/]")
-                self._session = None
-                self._target = None
-                return False
-
-        try:
-            if self._session is None:
-                CONSOLE.print("[red]  未找到调试探针，请检查 USB 连接[/]")
-                return False
-            self._session.open()
-            self._target = self._session.board.target
-
-            # 读取 pyocd 实际识别到的目标型号
-            detected = getattr(self._target, "target_type", None) or (target_name or "unknown")
-            # 若是自动检测，用检测到的型号更新 chip 变量
-            resolved_chip = chip.upper() if explicit_chip else detected.upper()
-            resolved_family = self._detect_family(resolved_chip)
-            self.set_family(resolved_family)
-
-            self.chip_info = {
-                "device": resolved_chip,
-                "pyocd_target": detected,
-                "family": resolved_family,
-                "probe": self._session.board.description,
-            }
-            self.connected = True
-            CONSOLE.print(
-                f"[green]  已连接: {resolved_chip} " f"| 探针: {self._session.board.description}[/]"
-            )
-            # Warmup：halt→读CPUID，稳定 SWD 会话，保持 halt 状态以便烧录
-            try:
-                self._target.halt()
-                time.sleep(0.1)
-                self._target.read32(0xE000ED00)  # CPUID，只读安全寄存器
-                time.sleep(0.05)
-                # 不 resume，保持 halt——烧录前必须 halt，reconnect 后也不例外
-            except Exception:
-                pass
-            return True
-        except Exception as e:
-            CONSOLE.print(f"[red]  连接后处理失败: {e}[/]")
-            self._session = None
-            self._target = None
-            return False
-
-    def stop(self):
-        if self._session:
-            try:
-                self._target.resume()
-            except Exception:
-                pass
-            try:
-                self._session.close()
-            except Exception:
-                pass
-            self._session = None
-            self._target = None
-        self.connected = False
-
-    # ---- 烧录 ----
-    def flash(self, bin_path: str) -> dict:
-        if not self.connected:
-            return {"ok": False, "msg": "探针未连接，请先 connect"}
-        p = Path(bin_path)
-        if not p.exists():
-            return {"ok": False, "msg": f"文件不存在: {bin_path}"}
-
-        try:
-            from pyocd.flash.file_programmer import FileProgrammer
-        except ImportError:
-            return {"ok": False, "msg": "pyocd 未安装"}
-
-        size = p.stat().st_size
-        t0 = time.time()
-        CONSOLE.print(f"[dim]  烧录 {size} 字节...[/]")
-        # 烧录前 reset_and_halt，将 MCU 恢复到干净复位状态再写 flash
-        # 仅 halt() 不够——若前一个固件开了 IWDG 或 I2C 卡死，flash 算法也会被影响
-        try:
-            self._target.reset_and_halt()
-            time.sleep(0.1)
-        except Exception:
-            try:
-                self._target.halt()
-                time.sleep(0.05)
-            except Exception:
-                pass
-        try:
-            programmer = FileProgrammer(self._session)
-            programmer.program(str(p), base_address=0x08000000)
-        except Exception as e:
-            return {"ok": False, "msg": f"烧录异常: {e}"}
-
-        dt = time.time() - t0
-        spd = size / dt / 1024 if dt > 0 else 0
-        # 烧录后复位并运行（失败不致命，固件已写入）
-        try:
-            self._target.reset_and_halt()
-            time.sleep(0.1)
-            self._target.resume()
-        except Exception as e:
-            CONSOLE.print(f"[yellow]  复位警告（固件已烧录）: {e}[/]")
-        return {"ok": True, "msg": f"烧录成功 {size}B / {dt:.1f}s ({spd:.1f} KB/s)"}
-
-    # ---- 寄存器读取 ----
-    def read_registers(self, names: Optional[list] = None) -> Optional[dict]:
-        if not self.connected:
-            return None
-        try:
-            self._target.halt()
-            time.sleep(REGISTER_READ_DELAY)
-
-            targets = names if names else list(self._reg_map.keys())
-            regs = {}
-            for name in targets:
-                addr = self._reg_map.get(name)
-                if addr is None:
-                    continue
-                try:
-                    val = self._target.read32(addr)
-                    regs[name] = f"0x{val:08X}"
-                except Exception:
-                    pass
-
-            # 读 PC
-            try:
-                pc = self._target.read_core_register("pc")
-                regs["PC"] = f"0x{pc:08X}"
-            except Exception:
-                pass
-
-            self._target.resume()
-            return regs
-        except Exception as e:
-            CONSOLE.print(f"[red]  寄存器读取异常: {e}[/]")
-            return None
-
-    def read_all_for_debug(self) -> Optional[dict]:
-        return self.read_registers()
-
-    def analyze_fault(self, regs: dict) -> str:
-        cfsr_str = regs.get("SCB_CFSR", "0x00000000")
-        try:
-            cfsr = int(cfsr_str, 16)
-        except ValueError:
-            return "CFSR 格式错误"
-        if cfsr == 0:
-            return "无故障"
-        checks = [
-            (0x01, "IACCVIOL: 指令访问违规"),
-            (0x02, "DACCVIOL: 数据访问违规"),
-            (0x100, "IBUSERR: 指令总线错误"),
-            (0x200, "PRECISERR: 精确总线错误（外设未使能时钟）"),
-            (0x400, "IMPRECISERR: 非精确总线错误"),
-            (0x10000, "UNDEFINSTR: 未定义指令"),
-            (0x20000, "INVSTATE: 无效 EPSR 状态"),
-            (0x1000000, "UNALIGNED: 非对齐访问"),
-            (0x2000000, "DIVBYZERO: 除零"),
-        ]
-        faults = [desc for mask, desc in checks if cfsr & mask]
-        return "; ".join(faults) if faults else f"未知故障 CFSR=0x{cfsr:08X}"
-
-    def list_probes(self) -> list:
-        """列出所有可用探针"""
-        try:
-            from pyocd.core.session import Session
-            from pyocd.probe.aggregator import DebugProbeAggregator
-
-            probes = DebugProbeAggregator.get_all_connected_probes()
-            return [{"uid": p.unique_id, "description": p.product_name} for p in probes]
-        except Exception:
-            return []
-
-
-# ─────────────────────────────────────────────────────────────
-# ─────────────────────────────────────────────────────────────
-# 串口自动检测
-# ─────────────────────────────────────────────────────────────
-def detect_serial_ports(verbose: bool = False) -> list:
-    """
-    跨平台扫描可用串口，按 STM32 使用优先级排序。
-    Windows : CH340/CP210x → COMx（数字小的优先）
-    macOS   : tty.usbserial-* / tty.usbmodem* → cu.* 备选
-    Linux   : ttyUSB* / ttyACM* → ttyAMA* → ttyS[4+]
-    只返回当前用户有读写权限的端口。
-    """
-    import glob, platform, re
-
-    plat = platform.system()  # 'Windows' / 'Darwin' / 'Linux'
-    found = []  # 有序去重列表，USB优先
-
-    def _add(port: str, usb: bool = False):
-        """加入列表，usb=True 时插到所有非usb端口之前"""
-        if port in found:
-            return
-        if usb:
-            # 找到第一个非usb端口的位置，插入其前
-            idx = next((i for i, p in enumerate(found) if p not in _usb_set), len(found))
-            found.insert(idx, port)
-            _usb_set.add(port)
-        else:
-            found.append(port)
-
-    _usb_set: set = set()
-
-    # ── 1. pyserial list_ports（所有平台最可靠的来源）────────────
-    try:
-        import serial.tools.list_ports as lp
-
-        skip_kw = ("bluetooth", "virtual", "rfcomm", "modem")
-        for info in lp.comports():
-            port = info.device
-            desc = (info.description or "").lower()
-            hwid = (info.hwid or "n/a").lower()
-            if any(k in desc for k in skip_kw):
-                continue
-            # 跳过 hwid='n/a' 的 ttyS：是内核注册的幽灵串口，没有实际硬件
-            if hwid == "n/a" and re.search(r"ttyS\d+$", port):
-                continue
-            is_usb = "usb" in hwid or "ch34" in hwid or "cp21" in hwid or "ft23" in hwid
-            _add(port, usb=is_usb)
-    except Exception:
-        pass
-
-    # ── 2. 平台专属补充扫描（pyserial 有时漏掉设备）───────────────
-    if plat == "Windows":
-        # Windows: 枚举 COM1-COM256，跳过已找到的
-        try:
-            import winreg
-
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DEVICEMAP\SERIALCOMM")
-            i = 0
-            while True:
-                try:
-                    _, port, _ = winreg.EnumValue(key, i)
-                    _add(port)
-                    i += 1
-                except OSError:
-                    break
-        except Exception:
-            pass
-
-    elif plat == "Darwin":
-        # macOS: tty.usbserial / tty.usbmodem 优先，cu.* 备选
-        for pattern, is_usb in [
-            ("/dev/tty.usbserial*", True),
-            ("/dev/tty.usbmodem*", True),
-            ("/dev/tty.SLAB*", True),  # CP210x
-            ("/dev/tty.wchusbserial*", True),  # CH340
-            ("/dev/cu.usbserial*", True),
-            ("/dev/cu.usbmodem*", True),
-            ("/dev/tty.*", False),
-        ]:
-            for p in sorted(glob.glob(pattern)):
-                if os.access(p, os.R_OK | os.W_OK):
-                    _add(p, usb=is_usb)
-
-    else:  # Linux / FreeBSD / 其他 POSIX
-        # USB 转串口（最高优先）
-        for pattern in ["/dev/ttyUSB*", "/dev/ttyACM*"]:
-            for p in sorted(glob.glob(pattern)):
-                real = os.path.realpath(p)
-                if os.access(real, os.R_OK | os.W_OK):
-                    _add(real, usb=True)
-        # by-id 符号链接（解析后去重，仍属 USB 优先）
-        for p in sorted(glob.glob("/dev/serial/by-id/*")):
-            real = os.path.realpath(p)
-            if os.access(real, os.R_OK | os.W_OK) and real not in found:
-                _add(real, usb=True)
-
-        # SBC 硬件 UART 补充（ttyAMA 始终可靠；ttyS 用 sysfs 验证有无实际硬件）
-        def _has_sysfs_device(port: str) -> bool:
-            """Linux: /sys/class/tty/ttySx/device 存在 = 真实硬件 UART"""
-            name = os.path.basename(port)
-            return os.path.exists(f"/sys/class/tty/{name}/device")
-
-        for p in sorted(glob.glob("/dev/ttyAMA*")):
-            if os.access(p, os.R_OK | os.W_OK) and p not in found:
-                _add(p, usb=False)
-
-        for p in sorted(glob.glob("/dev/ttyS*")):
-            if p in found or not os.access(p, os.R_OK | os.W_OK):
-                continue
-            if _has_sysfs_device(p):  # 有 sysfs device 条目 = 真实 UART
-                _add(p, usb=False)
-
-    if verbose:
-        CONSOLE.print(f"[dim]  检测到串口: {found if found else '无'}[/]")
-    return found
-
-
-def auto_open_serial(baud: int = SERIAL_BAUD) -> tuple:
-    """
-    自动检测并尝试打开第一个可用串口，返回 (port, serial_obj) 或 (None, None)。
-    """
-    try:
-        import serial as pyserial
-    except ImportError:
-        return None, None
-
-    candidates = detect_serial_ports()
-    for port in candidates:
-        try:
-            s = pyserial.Serial(port, baud, timeout=0.3)
-            s.close()
-            return port, None  # 可以打开，返回 port
-        except Exception:
-            continue
-    return None, None
-
-
-# ─────────────────────────────────────────────────────────────
-# SerialMonitor（与 hardware.py 保持一致）
-# ─────────────────────────────────────────────────────────────
-class SerialMonitor:
-    def __init__(self):
-        self._serial = None
-        self._port = None
-        self._buffer = ""
-        self._lock = threading.Lock()
-        self._thread = None
-        self._running = False
-
-    def open(self, port: str = None, baud: int = SERIAL_BAUD) -> bool:
-        try:
-            import serial as pyserial
-        except ImportError:
-            CONSOLE.print("[yellow]  pyserial 未安装: pip install pyserial[/]")
-            return False
-
-        # 确定要尝试的端口列表
-        if port:
-            # 指定了端口：先试指定的，失败再自动扫描
-            candidates = [port] + [p for p in detect_serial_ports() if p != port]
-        else:
-            # 未指定：完全自动检测
-            candidates = detect_serial_ports()
-            if not candidates:
-                CONSOLE.print("[yellow]  串口: 未检测到任何可用串口[/]")
-                return False
-
-        for p in candidates:
-            try:
-                self._serial = pyserial.Serial(p, baud, timeout=0.5)
-                self._serial.reset_input_buffer()
-                self._running = True
-                self._thread = threading.Thread(target=self._reader, daemon=True)
-                self._thread.start()
-                self._port = p
-                CONSOLE.print(f"[green]  串口: {p} @ {baud}[/]")
-                return True
-            except Exception as e:
-                if p == candidates[-1]:
-                    # 最后一个也失败了，给出有用提示（跨平台）
-                    import platform as _plt
-
-                    if _plt.system() == "Linux" and not os.access(p, os.R_OK | os.W_OK):
-                        try:
-                            import grp as _grp
-
-                            grp_name = _grp.getgrgid(os.stat(p).st_gid).gr_name
-                        except Exception:
-                            grp_name = "dialout"
-                        CONSOLE.print(
-                            f"[yellow]  串口: {p} 权限不足 → "
-                            f"sudo usermod -aG {grp_name} $USER && newgrp {grp_name}[/]"
-                        )
-                    else:
-                        CONSOLE.print(f"[yellow]  串口打开失败: {e}[/]")
-                # 继续尝试下一个
-                continue
-        return False
-
-    def _reader(self):
-        try:
-            import serial as _pyserial
-
-            _SerialException = _pyserial.SerialException
-        except ImportError:
-            _SerialException = OSError
-
-        consecutive_errors = 0
-        while self._running and self._serial:
-            try:
-                data = self._serial.read(1024)
-                if data:
-                    consecutive_errors = 0
-                    with self._lock:
-                        self._buffer += data.decode("utf-8", errors="ignore")
-                        if len(self._buffer) > 8192:
-                            self._buffer = self._buffer[-8192:]
-            except _SerialException:
-                # 串口物理断开
-                CONSOLE.print("[yellow]  ⚠ 串口断开[/]")
-                self._running = False
-                break
-            except Exception:
-                consecutive_errors += 1
-                if consecutive_errors > 10:
-                    CONSOLE.print("[yellow]  ⚠ 串口持续异常，停止读取[/]")
-                    self._running = False
-                    break
-                time.sleep(0.1)
-
-    def read_and_clear(self) -> str:
-        with self._lock:
-            out = self._buffer
-            self._buffer = ""
-            return out
-
-    def clear(self):
-        with self._lock:
-            self._buffer = ""
-
-    def wait_for(self, keyword: str, timeout: float = 5.0, clear_first: bool = True) -> str:
-        if clear_first:
-            self.clear()
-        t0 = time.time()
-        while time.time() - t0 < timeout:
-            with self._lock:
-                if keyword in self._buffer:
-                    break
-            time.sleep(0.1)
-        time.sleep(0.3)
-        return self.read_and_clear()
-
-    def close(self):
-        self._running = False
-        if self._serial:
-            try:
-                self._serial.close()
-            except Exception:
-                pass
-            self._serial = None
-
-
-def _wait_serial_adaptive(
-    serial,
-    keyword: str,
-    min_wait: float = 0.5,
-    max_wait: float = 8.0,
-) -> str:
-    """
-    自适应串口等待：
-    - 先等 min_wait 秒（给 MCU 复位时间）
-    - 之后每 200ms 采样一次，检测到 keyword 或有内容即停
-    - 超过 max_wait 后强制返回
-    """
-    time.sleep(min_wait)
-    t0 = time.time()
-    accumulated = ""
-    while time.time() - t0 < (max_wait - min_wait):
-        chunk = serial.read_and_clear()
-        if chunk:
-            accumulated += chunk
-            if keyword in accumulated:
-                break
-        time.sleep(0.2)
-    time.sleep(0.3)
-    accumulated += serial.read_and_clear()
-    return accumulated
-
-
-# ─────────────────────────────────────────────────────────────
-# 全局硬件状态（工具函数直接访问）
+# PyOCDBridge / SerialMonitor 已迁移到 hardware/
 # ─────────────────────────────────────────────────────────────
 MAX_DEBUG_ATTEMPTS = 8  # 提高上限，一个任务最多 8 轮（含修改迭代）
 
@@ -1007,16 +375,36 @@ def _get_compiler() -> Compiler:
 
 
 def _get_bridge() -> PyOCDBridge:
+    """Return the SWD bridge singleton stored in the runtime context."""
+
     ctx = get_context()
-    if ctx.bridge is None:
-        ctx.bridge = PyOCDBridge()
+    bridge = ctx.bridge
+    if not isinstance(bridge, PyOCDBridge):
+        ctx.bridge = PyOCDBridge(
+            console=CONSOLE,
+            reg_map_factory=_reg_map,
+            register_read_delay=REGISTER_READ_DELAY,
+            default_chip=DEFAULT_CHIP,
+        )
+    else:
+        bridge.configure(
+            console=CONSOLE,
+            reg_map_factory=_reg_map,
+            register_read_delay=REGISTER_READ_DELAY,
+            default_chip=DEFAULT_CHIP,
+        )
     return ctx.bridge
 
 
 def _get_serial() -> SerialMonitor:
+    """Return the serial monitor singleton stored in the runtime context."""
+
     ctx = get_context()
-    if ctx.serial is None:
-        ctx.serial = SerialMonitor()
+    monitor = ctx.serial
+    if not isinstance(monitor, SerialMonitor):
+        ctx.serial = SerialMonitor(console=CONSOLE)
+    else:
+        monitor.console = CONSOLE
     return ctx.serial
 
 
@@ -1192,7 +580,7 @@ void OLED_ShowFont{size}(uint8_t x, uint8_t y, uint8_t idx) {{
 
 def stm32_list_probes() -> dict:
     """列出所有可用的调试探针（ST-Link / CMSIS-DAP / J-Link）"""
-    probes = _get_bridge().list_probes()
+    probes = list_swd_probes(console=CONSOLE)
     if not probes:
         return {"success": True, "probes": [], "message": "未检测到任何探针，请检查 USB 连接"}
     return {"success": True, "probes": probes}
@@ -1201,17 +589,27 @@ def stm32_list_probes() -> dict:
 def stm32_connect(chip: str = None) -> dict:
     """连接 STM32 硬件（pyocd 探针 + 串口监控）"""
     ctx = get_context()
-    # chip=None → 使用当前已知芯片或默认芯片，避免 pyocd 退化到 generic cortex_m
+    swd_result = connect_swd(
+        ctx,
+        chip,
+        default_chip=DEFAULT_CHIP,
+        register_read_delay=REGISTER_READ_DELAY,
+        reg_map_factory=_reg_map,
+        console=CONSOLE,
+    )
+    bridge = swd_result.get("bridge")
+    if isinstance(bridge, PyOCDBridge):
+        ctx.bridge = bridge
     target_chip = chip or ctx.chip or DEFAULT_CHIP
-    bridge = _get_bridge()
-    serial = _get_serial()
-
-    if bridge.start(target_chip):
+    if swd_result["success"]:
         ctx.hw_connected = True
-        # 用 pyocd 实际识别到的型号（自动检测场景下会与传入值不同）
         ctx.chip = bridge.chip_info.get("device", target_chip)
         _get_compiler().set_chip(ctx.chip)
-        ctx.serial_connected = serial.open()
+        serial_result = connect_serial(ctx, baud=SERIAL_BAUD, console=CONSOLE)
+        monitor = serial_result.get("serial")
+        if isinstance(monitor, SerialMonitor):
+            ctx.serial = monitor
+        ctx.serial_connected = bool(serial_result.get("success"))
         return {
             "success": True,
             "chip": ctx.chip,
@@ -1220,7 +618,7 @@ def stm32_connect(chip: str = None) -> dict:
             "message": f"硬件已连接: {ctx.chip}",
         }
     ctx.hw_connected = False
-    return {"success": False, "message": "连接失败，请检查探针 USB 连接和驱动"}
+    return {"success": False, "message": str(swd_result.get("message", "连接失败"))}
 
 
 def stm32_serial_connect(port: str = None, baud: int = None) -> dict:
@@ -1229,15 +627,13 @@ def stm32_serial_connect(port: str = None, baud: int = None) -> dict:
     用于更换串口设备或在 stm32_connect 之后补充连接串口。
     """
     ctx = get_context()
-    serial = _get_serial()
-    # 若已连接先关闭
-    serial.close()
-    ctx.serial_connected = False
-
     use_baud = baud or SERIAL_BAUD
-    # port=None → 自动检测；否则先试指定端口，失败时扫描其他
-    ctx.serial_connected = serial.open(port or None, use_baud)
-    actual_port = getattr(serial, "_port", port or "自动检测")
+    result = connect_serial(ctx, port or None, use_baud, console=CONSOLE)
+    monitor = result.get("serial")
+    if isinstance(monitor, SerialMonitor):
+        ctx.serial = monitor
+    ctx.serial_connected = bool(result.get("success"))
+    actual_port = getattr(ctx.serial, "port", None) or port or "自动检测"
     if ctx.serial_connected:
         return {
             "success": True,
@@ -1257,7 +653,7 @@ def stm32_serial_connect(port: str = None, baud: int = None) -> dict:
 def stm32_serial_disconnect() -> dict:
     """断开串口（保留 pyocd 探针连接）"""
     ctx = get_context()
-    _get_serial().close()
+    disconnect_serial(ctx)
     ctx.serial_connected = False
     return {"success": True, "message": "串口已断开"}
 
@@ -1265,8 +661,8 @@ def stm32_serial_disconnect() -> dict:
 def stm32_disconnect() -> dict:
     """断开硬件连接（释放探针和串口）"""
     ctx = get_context()
-    _get_bridge().stop()
-    _get_serial().close()
+    disconnect_swd(ctx)
+    disconnect_serial(ctx)
     ctx.hw_connected = False
     ctx.serial_connected = False
     return {"success": True, "message": "已断开"}
@@ -2273,15 +1669,14 @@ def stm32_flash(bin_path: str = None) -> dict:
     if not path or not Path(path).exists():
         return {"success": False, "message": f"固件文件不存在: {path}"}
     _get_serial().clear()
-    r = _get_bridge().flash(path)
-    return {"success": r["ok"], "message": r["msg"]}
+    return flash_via_swd(ctx, path)
 
 
 def stm32_read_registers(regs: list = None) -> dict:
     """读取 STM32 硬件寄存器（RCC、GPIO、TIM、UART 等）"""
     if not get_context().hw_connected:
         return {"success": False, "message": "硬件未连接"}
-    result = _get_bridge().read_registers(regs) if regs else _get_bridge().read_all_for_debug()
+    result = read_registers(get_context(), regs, debug_all=not regs)
     if result is not None:
         return {"success": True, "registers": result}
     return {"success": False, "message": "寄存器读取失败"}
@@ -2300,15 +1695,7 @@ def stm32_analyze_fault() -> dict:
 
 def stm32_serial_read(timeout: float = 3.0, wait_for: str = None) -> dict:
     """读取 UART 串口输出（调试日志）"""
-    if not get_context().serial_connected:
-        return {"success": False, "message": "串口未连接"}
-    serial = _get_serial()
-    if wait_for:
-        output = serial.wait_for(wait_for, timeout=timeout)
-    else:
-        time.sleep(min(timeout, 2.0))
-        output = serial.read_and_clear()
-    return {"success": True, "output": output, "has_output": bool(output.strip())}
+    return read_serial_output(get_context(), timeout=timeout, wait_for=wait_for)
 
 
 def stm32_reset_debug_attempts() -> dict:
@@ -2384,7 +1771,7 @@ def stm32_auto_flash_cycle(code: str, request: str = "") -> dict:
         sensor_errors = []
         if ctx.serial_connected:
             CONSOLE.print("[dim]  等待启动...[/]")
-            uart_out = _wait_serial_adaptive(
+            uart_out = wait_serial_adaptive(
                 _get_serial(),
                 keyword="Gary:BOOT",
                 min_wait=0.5,
