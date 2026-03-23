@@ -18,3 +18,7 @@ build-backend = "gary_not_installable"
 # 仅供说明，不影响任何工具行为
 description = "Gary Dev Agent 自定义安装脚本，请用 python setup.py --auto 安装"
 install_command = "python setup.py --auto"
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
