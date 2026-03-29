@@ -157,6 +157,107 @@ AGENT_SCRIPT = SCRIPT_DIR / "stm32_agent.py"
 
 PIP = [sys.executable, "-m", "pip"]
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 网络环境检测与镜像加速
+# ─────────────────────────────────────────────────────────────────────────────
+# 全局缓存，None 表示尚未检测
+_IS_CHINA_NETWORK: Optional[bool] = None
+
+# GitHub 代理（国内加速）
+_GITHUB_PROXY       = "https://ghfast.top/"          # 支持 github.com 归档/Release
+_GITHUB_RAW_MIRROR  = "https://raw.gitmirror.com/"   # 替换 raw.githubusercontent.com
+
+# pip 国内镜像
+_PIP_MIRROR         = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+
+# 国内网络判定阈值（秒）：访问 GitHub 耗时超过此值视为国内
+_CN_LATENCY_THRESHOLD = 3.0
+# 检测超时（秒）
+_CN_DETECT_TIMEOUT    = 5
+
+
+def _detect_china_network() -> bool:
+    """
+    通过同时探测 GitHub 和百度来判断是否处于国内网络。
+    - 若 GitHub 在 _CN_LATENCY_THRESHOLD 秒内无法访问或延迟过高，返回 True（国内）。
+    - 若 GitHub 访问正常（延迟低），返回 False（海外/VPN）。
+    缓存于全局变量 _IS_CHINA_NETWORK，仅在首次调用时实际检测。
+    """
+    global _IS_CHINA_NETWORK
+    if _IS_CHINA_NETWORK is not None:
+        return _IS_CHINA_NETWORK
+
+    import urllib.request
+    import time
+
+    print(f"\n  {_c('36', '->')} 检测网络环境（探测 GitHub 连通性）...", end=" ", flush=True)
+
+    github_ok   = False
+    github_slow = True
+
+    try:
+        t0 = time.time()
+        req = urllib.request.Request(
+            "https://github.com",
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        with urllib.request.urlopen(req, timeout=_CN_DETECT_TIMEOUT):
+            elapsed = time.time() - t0
+            github_ok   = True
+            github_slow = elapsed > _CN_LATENCY_THRESHOLD
+    except Exception:
+        github_ok   = False
+        github_slow = True
+
+    _IS_CHINA_NETWORK = (not github_ok) or github_slow
+
+    if _IS_CHINA_NETWORK:
+        print(_c("33", "国内网络，启用镜像加速"))
+    else:
+        print(_c("32", "海外网络，直连 GitHub"))
+
+    return _IS_CHINA_NETWORK
+
+
+def _mirror_url(url: str) -> str:
+    """
+    根据网络环境将下载 URL 转换为镜像地址。
+    仅在检测到国内网络时生效，海外网络直接返回原始 URL。
+    支持：
+      - https://github.com/...         → ghfast.top 代理
+      - https://raw.githubusercontent.com/... → raw.gitmirror.com
+    其他 URL（如 ARM 官网）保持不变。
+    """
+    if not _detect_china_network():
+        return url  # 海外网络：原始地址
+
+    # raw.githubusercontent.com → raw.gitmirror.com
+    if url.startswith("https://raw.githubusercontent.com/"):
+        mirrored = url.replace(
+            "https://raw.githubusercontent.com/",
+            _GITHUB_RAW_MIRROR,
+            1,
+        )
+        return mirrored
+
+    # github.com 归档 / Release → ghfast.top 前缀代理
+    if url.startswith("https://github.com/"):
+        return _GITHUB_PROXY + url
+
+    return url  # 其他地址（ARM 官网等）不处理
+
+
+def _pip_mirror_args() -> List[str]:
+    """
+    若处于国内网络，返回 pip 镜像参数列表；否则返回空列表。
+    示例: ["-i", "https://pypi.tuna.tsinghua.edu.cn/simple/",
+           "--trusted-host", "pypi.tuna.tsinghua.edu.cn"]
+    """
+    if not _detect_china_network():
+        return []
+    host = _PIP_MIRROR.split("/")[2]  # 取域名
+    return ["-i", _PIP_MIRROR, "--trusted-host", host]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 工具函数
@@ -202,37 +303,61 @@ def _distro() -> tuple:
 
 
 def _download(url: str, dest: Path, label: str = "", retries: int = 3) -> bool:
+    """
+    下载文件到 dest。
+    自动根据网络环境将 URL 转换为镜像地址（_mirror_url），
+    若镜像下载失败则自动回退到原始地址重试。
+    """
     import urllib.request
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    for attempt in range(1, retries + 1):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                total = int(resp.headers.get("Content-Length", 0))
-                downloaded = 0
-                with open(dest, "wb") as f:
-                    while True:
-                        chunk = resp.read(65536)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if total and label:
-                            pct = min(downloaded * 100 // total, 100)
-                            bar = "#" * (pct // 5) + "." * (20 - pct // 5)
-                            print(f"\r    [{bar}] {pct:3d}%  {label[:40]}", end="", flush=True)
-            if label:
-                print()
-            return True
-        except Exception as e:
-            if label:
-                print()
-            dest.unlink(missing_ok=True)  # 清理残破的部分文件
-            if attempt < retries:
-                warn(f"下载失败（第 {attempt}/{retries} 次），重试中... [{label}]: {e}")
-            else:
-                err(f"下载失败（已重试 {retries} 次）[{label}]: {e}")
+
+    mirrored_url = _mirror_url(url)
+    # 构造尝试列表：镜像优先，失败后回退原始地址
+    urls_to_try: List[tuple] = []
+    if mirrored_url != url:
+        urls_to_try.append((mirrored_url, "[镜像]"))
+        urls_to_try.append((url, "[原始]"))
+    else:
+        urls_to_try.append((url, ""))
+
+    for try_url, tag in urls_to_try:
+        tag_label = f"{label}{tag}" if tag else label
+        for attempt in range(1, retries + 1):
+            try:
+                req = urllib.request.Request(try_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    total = int(resp.headers.get("Content-Length", 0))
+                    downloaded = 0
+                    with open(dest, "wb") as f:
+                        while True:
+                            chunk = resp.read(65536)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total and tag_label:
+                                pct = min(downloaded * 100 // total, 100)
+                                bar = "#" * (pct // 5) + "." * (20 - pct // 5)
+                                print(
+                                    f"\r    [{bar}] {pct:3d}%  {tag_label[:40]}",
+                                    end="",
+                                    flush=True,
+                                )
+                if tag_label:
+                    print()
+                return True  # 下载成功
+            except Exception as e:
+                if tag_label:
+                    print()
+                dest.unlink(missing_ok=True)
+                if attempt < retries:
+                    warn(f"下载失败（第 {attempt}/{retries} 次），重试中... [{tag_label}]: {e}")
+                else:
+                    warn(f"地址 {tag} 下载失败（已重试 {retries} 次）[{label}]: {e}")
+        # 当前 URL 全部重试失败，尝试下一个地址（若有）
+
+    err(f"所有下载地址均失败: {label}")
     return False
 
 
@@ -263,7 +388,7 @@ def _extract_zip(zip_path: Path, dest_dir: Path, sub_paths: List[str]) -> bool:
                 for member in zf.namelist():
                     if not member.startswith(src_prefix):
                         continue
-                    rel = member[len(src_prefix) :]
+                    rel = member[len(src_prefix):]
                     if not rel or rel.endswith("/"):
                         continue
                     fname = Path(rel).name
@@ -649,7 +774,14 @@ def _arm_gcc_linux(auto: bool):
 def _arm_gcc_mac(auto: bool):
     if _which("brew"):
         if auto or ask("使用 Homebrew 安装 arm-none-eabi-gcc？"):
-            _run(["brew", "install", "arm-none-eabi-gcc"], capture=False)
+            # 国内网络给 Homebrew 设置镜像环境变量
+            brew_env = os.environ.copy()
+            if _detect_china_network():
+                brew_env["HOMEBREW_BREW_GIT_REMOTE"]   = "https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/brew.git"
+                brew_env["HOMEBREW_CORE_GIT_REMOTE"]   = "https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git"
+                brew_env["HOMEBREW_BOTTLE_DOMAIN"]      = "https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
+                info("国内网络：Homebrew 已切换清华镜像源")
+            _run(["brew", "install", "arm-none-eabi-gcc"], capture=False, env=brew_env)
     else:
         warn("未检测到 Homebrew")
         if auto or ask("先安装 Homebrew 再装工具链？"):
@@ -731,6 +863,7 @@ def _arm_gcc_download(auto: bool):
     tmp = Path(tempfile.mkdtemp())
     fmt = "zip" if url.endswith(".zip") else "tar.xz"
     archive = tmp / f"arm-toolchain.{fmt}"
+    # ARM 官网 URL 不走 GitHub 代理，直接下载（_download 内部对非 github.com 地址不转换）
     if not _download(url, archive, "arm-gnu-toolchain"):
         return
     info(f"解压到 {install_dir} ...")
@@ -796,7 +929,13 @@ PYTHON_PKGS = [
 
 def install_python_packages(auto: bool):
     header("Step 3  Python 依赖包")
-    _run(PIP + ["install", "--upgrade", "pip", "-q"], capture=False)
+
+    mirror_args = _pip_mirror_args()
+    if mirror_args:
+        info(f"pip 使用国内镜像: {_PIP_MIRROR}")
+
+    _run(PIP + ["install", "--upgrade", "pip", "-q"] + mirror_args, capture=False)
+
     missing_req, missing_opt = [], []
     for imp, pkg, required in PYTHON_PKGS:
         try:
@@ -813,11 +952,11 @@ def install_python_packages(auto: bool):
     if missing_opt:
         prompt += f" + {len(missing_opt)} 个可选包"
     if auto or ask(prompt + "？"):
-        r = _run(PIP + ["install"] + to_install, capture=False)
+        r = _run(PIP + ["install"] + to_install + mirror_args, capture=False)
         if r.returncode != 0:
             warn("批量安装失败，逐个安装...")
             for pkg in to_install:
-                _run(PIP + ["install", pkg], capture=False)
+                _run(PIP + ["install", pkg] + mirror_args, capture=False)
     elif missing_req:
         info(f"必须包未安装：{missing_req}")
 
@@ -861,16 +1000,16 @@ HAL_REPOS = {
 }
 
 CMSIS_CORE_FILES = {
-    "core_cm0.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/core_cm0.h",
-    "core_cm0plus.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/core_cm0plus.h",
-    "core_cm3.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/core_cm3.h",
-    "core_cm4.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/core_cm4.h",
-    "cmsis_version.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/cmsis_version.h",
+    "core_cm0.h":       "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/core_cm0.h",
+    "core_cm0plus.h":   "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/core_cm0plus.h",
+    "core_cm3.h":       "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/core_cm3.h",
+    "core_cm4.h":       "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/core_cm4.h",
+    "cmsis_version.h":  "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/cmsis_version.h",
     "cmsis_compiler.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/cmsis_compiler.h",
-    "cmsis_gcc.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/cmsis_gcc.h",
-    "cmsis_armcc.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/cmsis_armcc.h",
+    "cmsis_gcc.h":      "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/cmsis_gcc.h",
+    "cmsis_armcc.h":    "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/cmsis_armcc.h",
     "cmsis_armclang.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/cmsis_armclang.h",
-    "mpu_armv7.h": "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/mpu_armv7.h",
+    "mpu_armv7.h":      "https://raw.githubusercontent.com/ARM-software/CMSIS_5/5.9.0/CMSIS/Core/Include/mpu_armv7.h",
 }
 
 
@@ -898,6 +1037,9 @@ def download_hal(auto: bool, families: List[str] = None):
         if not (auto or ask(f"从 GitHub 下载 {fam_str} HAL（约 5-15 MB/系列）？")):
             warn("跳过 HAL 下载，编译将以语法检查模式运行")
             return
+
+    if _detect_china_network():
+        info("国内网络：HAL 库将通过 ghfast.top 镜像下载")
 
     import tempfile
 
@@ -928,6 +1070,8 @@ def _download_cmsis_core():
     step("ARM CMSIS Core 头文件...")
     dst_dir = HAL_DIR / "CMSIS" / "Include"
     dst_dir.mkdir(parents=True, exist_ok=True)
+    if _detect_china_network():
+        info("国内网络：CMSIS Core 头文件将通过 raw.gitmirror.com 镜像下载")
     failed = []
     for fname, url in CMSIS_CORE_FILES.items():
         dest = dst_dir / fname
@@ -951,11 +1095,9 @@ RTOS_DIR = WORKSPACE / "rtos"
 
 def download_freertos(auto: bool):
     header("Step 5b  FreeRTOS Kernel（RTOS 开发可选，约 2 MB）")
-    # 检测是否已下载（有任意包含 tasks.c 的子目录即认为就绪）
     rtos_kernel_dir = RTOS_DIR / "FreeRTOS-Kernel"
     already_ok = rtos_kernel_dir.exists() and (rtos_kernel_dir / "tasks.c").exists()
     if not already_ok:
-        # 兼容旧命名（如 FreeRTOS-Kernel-main）
         for d in RTOS_DIR.iterdir() if RTOS_DIR.exists() else []:
             if d.is_dir() and (d / "tasks.c").exists():
                 already_ok = True
@@ -970,6 +1112,9 @@ def download_freertos(auto: bool):
     ):
         info("已跳过，裸机（无 RTOS）模式不受影响")
         return
+
+    if _detect_china_network():
+        info("国内网络：FreeRTOS 将通过 ghfast.top 镜像下载")
 
     import tempfile, zipfile as _zf
 
@@ -1066,12 +1211,10 @@ def _build_pack_list() -> list:
     pack_target = _FAMILY_PACK_TARGET.get(family)
 
     if pack_target:
-        # 仅安装用户芯片所属系列
         family_label = f"STM32{family.upper()}xx"
         chip_hint = f"（{chip}）" if chip else ""
         return [(pack_target, pack_target, f"{family_label} 支持包{chip_hint}")]
     else:
-        # 未配置芯片时，安装最常用的 F1xx + F4xx
         return [
             ("stm32f103c8", "stm32f103c8", "STM32F1xx 支持包"),
             ("stm32f411ce", "stm32f411ce", "STM32F4xx 支持包"),
@@ -1185,6 +1328,27 @@ if "%1"=="do" (
     "{python}" "%GARY_SCRIPT%" %*
 )
 """
+
+
+def _get_win_install_dir() -> Path:
+    """返回 Windows 下 gary.bat 的安装目录（优先用户 Scripts，其次 AppData\\Local\\Programs\\Gary）"""
+    # 优先放到 Python Scripts 目录（通常已在 PATH）
+    scripts = Path(sys.executable).parent / "Scripts"
+    if scripts.exists():
+        return scripts
+    # 备用：用户级应用目录
+    appdata = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    return appdata / "Programs" / "Gary"
+
+
+def _check_win_path(install_dir: Path):
+    """检查 install_dir 是否在 PATH 中，不在则提示用户手动添加"""
+    path_env = os.environ.get("PATH", "")
+    if str(install_dir).lower() in path_env.lower():
+        return
+    warn(f"  {install_dir} 不在 PATH 中")
+    info("  请将该目录添加到系统 PATH，或在 PowerShell 中执行：")
+    info(f'  $env:PATH += ";{install_dir}"')
 
 
 def install_gary_command(auto: bool):
@@ -1310,6 +1474,11 @@ def verify():
     (ok if cmsis_ok else warn)(f"ARM CMSIS Core  {'OK' if cmsis_ok else '未找到'}")
     status["hal"] = hal_any and cmsis_ok
 
+    # 网络模式
+    if _IS_CHINA_NETWORK is not None:
+        mode_str = _c("33", "国内镜像模式") if _IS_CHINA_NETWORK else _c("32", "直连模式")
+        ok(f"网络环境: {mode_str}")
+
     # gary 命令
     gary_bin = shutil.which("gary")
     if gary_bin:
@@ -1380,6 +1549,9 @@ def main():
     )
 
     try:
+        # ── 网络环境检测（最先执行，结果全局缓存供后续步骤复用）──────────────
+        _detect_china_network()
+
         if args.check:
             verify()
             return
@@ -1420,7 +1592,6 @@ def main():
 
         traceback.print_exc()
     finally:
-        # Windows 下双击运行时保持窗口不自动关闭
         if IS_WIN and sys.stdin and sys.stdin.isatty():
             print()
             input("  按回车键关闭窗口...")
