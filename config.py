@@ -42,6 +42,3 @@ UART_READ_TIMEOUT = 3  # 串口读取超时（秒）
 DEFAULT_CHIP = "STM32F103C8T6"
 DEFAULT_CLOCK = "HSI_internal"
 
-AI_API_KEY = "sk-Vcadu6rEVtWMzf2H2BXiqasaNkCFQQpbaKOAV3PybqYTXOPm"
-AI_BASE_URL = "https://api.moonshot.cn/v1"
-AI_MODEL = "kimi-k2.5"
