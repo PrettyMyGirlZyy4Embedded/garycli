@@ -1,0 +1,17 @@
+{
+  "name": "ds18b20_atomic",
+  "display_name": "正点原子精英板DS18B20温度传感器",
+  "version": "1.0.0",
+  "description": "【正点原子STM32精英板】DS18B20温度传感器驱动，支持单总线协议，精度0.1°C",
+  "author": "Gary",
+  "url": "",
+  "license": "MIT",
+  "tags": ["ds18b20", "temperature", "sensor", "atomic", "onewire"],
+  "chip_families": [
+    "STM32F1", "STM32F4"
+  ],
+  "dependencies": [],
+  "skill_dependencies": [],
+  "min_gary_version": "1.0.0",
+  "schema_version": "1.0"
+}

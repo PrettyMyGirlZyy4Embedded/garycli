@@ -1,0 +1,52 @@
+{
+  "tools": [
+    {
+      "name": "dht11_atomic_get_driver_code",
+      "description": "获取正点原子标准DHT11驱动代码",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "string",
+            "description": "GPIO端口，如 GPIOA, GPIOB, GPIOC, GPIOD, GPIOE, GPIOF, GPIOG",
+            "default": "GPIOG"
+          },
+          "pin": {
+            "type": "integer",
+            "description": "GPIO引脚号，0-15",
+            "default": 11,
+            "minimum": 0,
+            "maximum": 15
+          }
+        }
+      }
+    },
+    {
+      "name": "dht11_atomic_get_full_main",
+      "description": "获取完整的main.c示例代码（DHT11 + 显示）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "string",
+            "description": "GPIO端口",
+            "default": "GPIOG"
+          },
+          "pin": {
+            "type": "integer",
+            "description": "GPIO引脚号，0-15",
+            "default": 11,
+            "minimum": 0,
+            "maximum": 15
+          },
+          "display": {
+            "type": "string",
+            "description": "显示方式",
+            "enum": ["oled", "uart", "none"],
+            "default": "oled"
+          }
+        }
+      }
+    }
+  ]
+}

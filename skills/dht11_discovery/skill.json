@@ -1,0 +1,15 @@
+{
+  "name": "dht11_discovery",
+  "display_name": "正点原子探索版DHT11驱动",
+  "version": "1.0.0",
+  "description": "正点原子探索版STM32F407 DHT11温湿度传感器驱动，支持OLED和串口显示",
+  "author": "Gary",
+  "url": "",
+  "license": "MIT",
+  "tags": ["dht11", "sensor", "temperature", "humidity", "discovery"],
+  "chip_families": ["STM32F4"],
+  "dependencies": [],
+  "skill_dependencies": [],
+  "min_gary_version": "1.0.0",
+  "schema_version": "1.0"
+}

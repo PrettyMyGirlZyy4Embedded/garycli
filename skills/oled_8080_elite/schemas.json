@@ -1,0 +1,60 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "oled_8080_elite_get_driver_code",
+      "description": "获取OLED 8080并口驱动完整代码，包含初始化、显示字符、字符串、清屏、几何图形绘制函数",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "oled_8080_elite_draw_bitmap",
+      "description": "生成位图绘制代码，支持预定义图案(heart/smile)或自定义位图",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "bitmap_name": {
+            "type": "string",
+            "description": "位图名称或描述，预定义: heart(爱心), smile(笑脸)，或自定义名称"
+          },
+          "width": {
+            "type": "integer",
+            "description": "位图宽度(像素)",
+            "default": 128
+          },
+          "height": {
+            "type": "integer",
+            "description": "位图高度(像素)",
+            "default": 64
+          }
+        },
+        "required": ["bitmap_name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "oled_8080_elite_get_full_main",
+      "description": "获取完整可编译的main.c代码，包含驱动和演示程序",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "demo": {
+            "type": "string",
+            "enum": ["string", "geometry", "bitmap", "clear"],
+            "description": "演示类型: string(字符串), geometry(几何图形), bitmap(位图), clear(清屏)",
+            "default": "string"
+          }
+        },
+        "required": []
+      }
+    }
+  }
+]

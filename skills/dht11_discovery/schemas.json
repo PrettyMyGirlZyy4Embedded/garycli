@@ -1,0 +1,54 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "dht11_discovery_get_driver_code",
+      "description": "获取DHT11驱动代码核心片段，可嵌入到main.c中使用",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "string",
+            "description": "GPIO端口，如GPIOA, GPIOB, ..., GPIOG",
+            "default": "GPIOG"
+          },
+          "pin": {
+            "type": "integer",
+            "description": "引脚号0-15",
+            "default": 9
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "dht11_discovery_get_full_main",
+      "description": "获取完整可编译的main.c（含DHT11 + OLED/UART显示）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "string",
+            "description": "GPIO端口，如GPIOA, GPIOB, ..., GPIOG",
+            "default": "GPIOG"
+          },
+          "pin": {
+            "type": "integer",
+            "description": "引脚号0-15",
+            "default": 9
+          },
+          "display": {
+            "type": "string",
+            "description": "显示方式: oled(8080并口OLED显示), uart(串口输出), none(仅驱动)",
+            "enum": ["oled", "uart", "none"],
+            "default": "oled"
+          }
+        },
+        "required": []
+      }
+    }
+  }
+]

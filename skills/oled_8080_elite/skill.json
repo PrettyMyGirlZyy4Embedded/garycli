@@ -1,0 +1,17 @@
+{
+  "name": "oled_8080_elite",
+  "display_name": "正点原子STM32精英板OLED 8080驱动",
+  "version": "1.0.0",
+  "description": "正点原子STM32精英板 OLED 8080并口驱动，支持任意图案绘制、文字显示、几何图形",
+  "author": "Gary",
+  "url": "",
+  "license": "MIT",
+  "tags": ["oled", "8080", "display", " STM32F103", "正点原子", "精英板"],
+  "chip_families": [
+    "STM32F1"
+  ],
+  "dependencies": [],
+  "skill_dependencies": [],
+  "min_gary_version": "1.0.0",
+  "schema_version": "1.0"
+}

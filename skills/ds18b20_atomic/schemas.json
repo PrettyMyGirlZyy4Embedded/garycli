@@ -1,0 +1,51 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "ds18b20_atomic_get_driver_code",
+      "description": "获取DS18B20驱动代码核心片段，可嵌入到main.c中使用",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "string",
+            "description": "GPIO端口，如GPIOG",
+            "default": "GPIOG"
+          },
+          "pin": {
+            "type": "integer",
+            "description": "引脚号，如11",
+            "default": 11
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ds18b20_atomic_get_full_main",
+      "description": "获取完整可编译的main.c（含DS18B20 + OLED显示）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "string",
+            "description": "GPIO端口",
+            "default": "GPIOG"
+          },
+          "pin": {
+            "type": "integer",
+            "description": "引脚号",
+            "default": 11
+          },
+          "display": {
+            "type": "string",
+            "description": "显示方式：oled/uart/none",
+            "default": "oled"
+          }
+        }
+      }
+    }
+  }
+]

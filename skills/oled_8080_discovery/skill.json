@@ -1,0 +1,15 @@
+{
+  "name": "oled_8080_discovery",
+  "display_name": "正点原子探索版OLED 8080驱动",
+  "version": "1.0.0",
+  "description": "正点原子STM32F407ZG探索版OLED 8080并口驱动，支持DS18B20温度传感器显示，自动清除残留字符",
+  "author": "Gary",
+  "url": "",
+  "license": "MIT",
+  "tags": ["oled", "8080", "display", "STM32F407", "探索版", "正点原子", "DS18B20", "温度"],
+  "chip_families": ["STM32F4"],
+  "dependencies": [],
+  "skill_dependencies": [],
+  "min_gary_version": "1.0.0",
+  "schema_version": "1.0"
+}

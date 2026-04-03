@@ -1,0 +1,56 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "oled_8080_discovery_get_driver_code",
+      "description": "获取正点原子探索版OLED 8080驱动代码核心片段",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "oled_8080_discovery_get_ds18b20_code",
+      "description": "获取DS18B20驱动代码",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "string",
+            "description": "GPIO端口，如GPIOA, GPIOB, ..., GPIOG",
+            "default": "GPIOG"
+          },
+          "pin": {
+            "type": "integer",
+            "description": "引脚号0-15",
+            "default": 9
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "oled_8080_discovery_get_full_main",
+      "description": "获取完整可编译的main.c（DS18B20 + OLED显示）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "display": {
+            "type": "string",
+            "description": "显示方式",
+            "enum": ["oled", "uart", "none"],
+            "default": "oled"
+          }
+        },
+        "required": []
+      }
+    }
+  }
+]
