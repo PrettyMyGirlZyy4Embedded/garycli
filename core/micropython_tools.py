@@ -10,7 +10,12 @@ from core.platforms import canonical_target_name, detect_target_platform
 from core.project_store import latest_workspace_main_path, save_project, sync_latest_workspace
 from core.state import get_context
 from hardware.micropython import list_remote_files, upload_text_file
-from hardware.serial_mon import SerialMonitor, connect_serial, detect_serial_ports, disconnect_serial
+from hardware.serial_mon import (
+    SerialMonitor,
+    connect_serial,
+    detect_serial_ports,
+    disconnect_serial,
+)
 
 
 def _micropython_platform_label(chip: str | None) -> str:
@@ -30,8 +35,7 @@ def _micropython_port_help(chip: str | None) -> str:
 def _looks_like_usb_device_port(port: str | None) -> bool:
     text = str(port or "").lower()
     return any(
-        token in text
-        for token in ("ttyacm", "ttyusb", "usbmodem", "usbserial", "/cu.usb", "com")
+        token in text for token in ("ttyacm", "ttyusb", "usbmodem", "usbserial", "/cu.usb", "com")
     )
 
 
@@ -214,7 +218,11 @@ def micropython_flash(
             else latest_workspace_main_path(ctx.chip)
         )
         if not source_path.exists():
-            return {"success": False, "platform": platform, "message": f"源文件不存在: {source_path}"}
+            return {
+                "success": False,
+                "platform": platform,
+                "message": f"源文件不存在: {source_path}",
+            }
         code = source_path.read_text(encoding="utf-8")
 
     disconnect_serial(ctx)
@@ -240,7 +248,9 @@ def micropython_flash(
 
     reconnect = _reconnect_monitor(resolved_port, baud, console=console)
     boot_output = result.get("boot_output", "")
-    traceback_present = "Traceback (most recent call last)" in boot_output or "Traceback:" in boot_output
+    traceback_present = (
+        "Traceback (most recent call last)" in boot_output or "Traceback:" in boot_output
+    )
     ctx.hw_connected = True
     return {
         "success": True,
@@ -291,7 +301,13 @@ def micropython_auto_sync_cycle(
         record_success_memory=record_success_memory,
         log_error=log_error,
     )
-    steps.append({"step": "compile", "success": compile_result.get("success", False), "msg": compile_result.get("message", "")})
+    steps.append(
+        {
+            "step": "compile",
+            "success": compile_result.get("success", False),
+            "msg": compile_result.get("message", ""),
+        }
+    )
     if not compile_result.get("success"):
         return {
             "success": False,
@@ -307,7 +323,13 @@ def micropython_auto_sync_cycle(
     ports = detect_serial_ports(verbose=False)
     if not ports and not getattr(getattr(ctx, "serial", None), "port", None):
         if request:
-            save_project(code, {"bin_path": None, "bin_size": len(code.encode("utf-8"))}, request, chip=ctx.chip, console=console)
+            save_project(
+                code,
+                {"bin_path": None, "bin_size": len(code.encode("utf-8"))},
+                request,
+                chip=ctx.chip,
+                console=console,
+            )
         return {
             "success": True,
             "attempt": attempt,
@@ -317,7 +339,13 @@ def micropython_auto_sync_cycle(
         }
 
     flash_result = micropython_flash(code=code, baud=baud, console=console)
-    steps.append({"step": "deploy", "success": flash_result.get("success", False), "msg": flash_result.get("message", "")})
+    steps.append(
+        {
+            "step": "deploy",
+            "success": flash_result.get("success", False),
+            "msg": flash_result.get("message", ""),
+        }
+    )
     if not flash_result.get("success"):
         return {
             "success": False,

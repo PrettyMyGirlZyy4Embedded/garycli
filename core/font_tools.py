@@ -145,7 +145,9 @@ void OLED_ShowFont{size}(uint8_t x, uint8_t y, uint8_t idx) {{
    OLED_ShowFont{size}(0, 0, 0);  // 显示 '{char_list[0] if char_list else "?"}' */
 """
 
-    preview_block = "\n\n".join(f"/* '{char}':\n{preview} */" for char, preview in zip(char_list, previews))
+    preview_block = "\n\n".join(
+        f"/* '{char}':\n{preview} */" for char, preview in zip(char_list, previews)
+    )
 
     return {
         "success": True,

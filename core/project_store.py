@@ -108,7 +108,9 @@ def list_projects() -> dict[str, Any]:
                 "name": project_dir.name,
                 "chip": config.get("chip", "?"),
                 "platform": config.get("platform", detect_target_platform(config.get("chip"))),
-                "source_file": config.get("source_file", source_filename_for_target(config.get("chip"))),
+                "source_file": config.get(
+                    "source_file", source_filename_for_target(config.get("chip"))
+                ),
                 "request": config.get("request", ""),
                 "timestamp": config.get("timestamp", ""),
             }
