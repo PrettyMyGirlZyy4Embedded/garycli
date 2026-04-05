@@ -6,16 +6,16 @@ import ast
 from pathlib import Path
 from typing import Any, Callable
 
-from core.platforms import canonical_target_name, detect_target_platform
+from core.platforms import (
+    canonical_target_name,
+    canonical_target_name_from_micropython_info,
+    detect_target_platform,
+    is_generic_micropython_name,
+)
 from core.project_store import latest_workspace_main_path, save_project, sync_latest_workspace
 from core.state import get_context
-from hardware.micropython import list_remote_files, upload_text_file
-from hardware.serial_mon import (
-    SerialMonitor,
-    connect_serial,
-    detect_serial_ports,
-    disconnect_serial,
-)
+from hardware.micropython import list_remote_files, probe_micropython_board, scan_micropython_boards, upload_text_file
+from hardware.serial_mon import SerialMonitor, connect_serial, detect_serial_ports, disconnect_serial
 
 
 def _micropython_platform_label(chip: str | None) -> str:
@@ -35,7 +35,8 @@ def _micropython_port_help(chip: str | None) -> str:
 def _looks_like_usb_device_port(port: str | None) -> bool:
     text = str(port or "").lower()
     return any(
-        token in text for token in ("ttyacm", "ttyusb", "usbmodem", "usbserial", "/cu.usb", "com")
+        token in text
+        for token in ("ttyacm", "ttyusb", "usbmodem", "usbserial", "/cu.usb", "com")
     )
 
 
@@ -64,6 +65,74 @@ def _reconnect_monitor(port: str | None, baud: int, *, console: Any = None) -> d
     return result
 
 
+def _autodetect_micropython_board(
+    *,
+    port: str | None = None,
+    baud: int = 115200,
+    console: Any = None,
+) -> dict[str, Any]:
+    ctx = get_context()
+    if getattr(getattr(ctx, "serial", None), "port", None):
+        disconnect_serial(ctx)
+        ctx.serial_connected = False
+
+    if port:
+        probe = probe_micropython_board(port=port, baud=baud, console=console)
+        if not probe.get("success"):
+            return probe
+        info = probe.get("info") or {}
+        chip = canonical_target_name_from_micropython_info(info)
+        if not chip:
+            return {
+                "success": False,
+                "port": port,
+                "info": info,
+                "message": f"已检测到 MicroPython 设备，但暂时无法识别板型: {info.get('machine') or info.get('platform') or port}",
+            }
+        return {
+            "success": True,
+            "port": port,
+            "chip": chip,
+            "platform": detect_target_platform(chip),
+            "info": info,
+            "scan_count": 1,
+        }
+
+    scan = scan_micropython_boards(baud=baud, console=console)
+    boards = scan.get("boards") or []
+    if not boards:
+        candidates = detect_serial_ports(verbose=False, console=console)
+        return {
+            "success": False,
+            "candidate_ports": candidates[:5],
+            "message": "未扫描到可自动识别的 MicroPython 设备，请确认开发板已刷入 MicroPython 固件并通过 USB 数据线连接",
+        }
+
+    for board in boards:
+        info = board.get("info") or {}
+        chip = canonical_target_name_from_micropython_info(info)
+        if not chip:
+            continue
+        return {
+            "success": True,
+            "port": board.get("port"),
+            "chip": chip,
+            "platform": detect_target_platform(chip),
+            "info": info,
+            "scan_count": len(boards),
+        }
+
+    first = boards[0]
+    info = first.get("info") or {}
+    return {
+        "success": False,
+        "port": first.get("port"),
+        "info": info,
+        "candidate_ports": [board.get("port") for board in boards if board.get("port")],
+        "message": f"已发现 {len(boards)} 个 MicroPython 设备，但暂时无法识别具体板型；请改用 /connect PICO_W 或 /connect ESP32",
+    }
+
+
 def micropython_connect(
     chip: str | None = None,
     *,
@@ -74,7 +143,44 @@ def micropython_connect(
     """Connect a serial MicroPython board over USB serial."""
 
     ctx = get_context()
-    ctx.chip = canonical_target_name(chip or ctx.chip or "ESP32")
+    requested_chip = chip or ctx.chip or "ESP32"
+    if is_generic_micropython_name(requested_chip):
+        detected = _autodetect_micropython_board(port=port, baud=baud, console=console)
+        if not detected.get("success"):
+            return {
+                "success": False,
+                "chip": "MICROPYTHON",
+                "platform": "unknown",
+                "serial_connected": False,
+                "candidate_ports": detected.get("candidate_ports", []),
+                "message": detected.get("message", "自动识别 MicroPython 开发板失败"),
+            }
+        ctx.chip = str(detected.get("chip") or "ESP32")
+        resolved_port = str(detected.get("port") or "")
+        info = detected.get("info") or {}
+        result = _reconnect_monitor(resolved_port, baud, console=console)
+        if result.get("success"):
+            return {
+                "success": True,
+                "chip": ctx.chip,
+                "platform": detect_target_platform(ctx.chip),
+                "serial_connected": True,
+                "port": result.get("port"),
+                "detected_info": info,
+                "message": f"已自动识别并连接: {ctx.chip} @ {result.get('port')}",
+            }
+        ctx.hw_connected = False
+        return {
+            "success": False,
+            "chip": ctx.chip,
+            "platform": detect_target_platform(ctx.chip),
+            "serial_connected": False,
+            "port": resolved_port,
+            "detected_info": info,
+            "message": result.get("message", "串口连接失败"),
+        }
+
+    ctx.chip = canonical_target_name(requested_chip)
     platform = detect_target_platform(ctx.chip)
     resolved_port = _serial_port_for_ctx(port)
     if port is None and resolved_port is None:
@@ -218,11 +324,7 @@ def micropython_flash(
             else latest_workspace_main_path(ctx.chip)
         )
         if not source_path.exists():
-            return {
-                "success": False,
-                "platform": platform,
-                "message": f"源文件不存在: {source_path}",
-            }
+            return {"success": False, "platform": platform, "message": f"源文件不存在: {source_path}"}
         code = source_path.read_text(encoding="utf-8")
 
     disconnect_serial(ctx)
@@ -248,9 +350,7 @@ def micropython_flash(
 
     reconnect = _reconnect_monitor(resolved_port, baud, console=console)
     boot_output = result.get("boot_output", "")
-    traceback_present = (
-        "Traceback (most recent call last)" in boot_output or "Traceback:" in boot_output
-    )
+    traceback_present = "Traceback (most recent call last)" in boot_output or "Traceback:" in boot_output
     ctx.hw_connected = True
     return {
         "success": True,
@@ -301,13 +401,7 @@ def micropython_auto_sync_cycle(
         record_success_memory=record_success_memory,
         log_error=log_error,
     )
-    steps.append(
-        {
-            "step": "compile",
-            "success": compile_result.get("success", False),
-            "msg": compile_result.get("message", ""),
-        }
-    )
+    steps.append({"step": "compile", "success": compile_result.get("success", False), "msg": compile_result.get("message", "")})
     if not compile_result.get("success"):
         return {
             "success": False,
@@ -323,13 +417,7 @@ def micropython_auto_sync_cycle(
     ports = detect_serial_ports(verbose=False)
     if not ports and not getattr(getattr(ctx, "serial", None), "port", None):
         if request:
-            save_project(
-                code,
-                {"bin_path": None, "bin_size": len(code.encode("utf-8"))},
-                request,
-                chip=ctx.chip,
-                console=console,
-            )
+            save_project(code, {"bin_path": None, "bin_size": len(code.encode("utf-8"))}, request, chip=ctx.chip, console=console)
         return {
             "success": True,
             "attempt": attempt,
@@ -339,13 +427,7 @@ def micropython_auto_sync_cycle(
         }
 
     flash_result = micropython_flash(code=code, baud=baud, console=console)
-    steps.append(
-        {
-            "step": "deploy",
-            "success": flash_result.get("success", False),
-            "msg": flash_result.get("message", ""),
-        }
-    )
+    steps.append({"step": "deploy", "success": flash_result.get("success", False), "msg": flash_result.get("message", "")})
     if not flash_result.get("success"):
         return {
             "success": False,
