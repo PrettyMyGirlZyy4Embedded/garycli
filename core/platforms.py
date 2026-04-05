@@ -13,6 +13,12 @@ RP2040_TARGET_CHOICES = (
     "RASPBERRY_PI_PICO",
     "RASPBERRY_PI_PICO_W",
 )
+MICROPYTHON_TARGET_CHOICES = (
+    "MICROPYTHON",
+    "MICROPY",
+    "MPY",
+    "MIRCOPYTHON",
+)
 ESP_TARGET_CHOICES = (
     "ESP32",
     "ESP32-DEVKITC",
@@ -59,6 +65,8 @@ def detect_target_platform(chip: str | None) -> str:
     name = normalize_target_name(chip)
     if not name:
         return "stm32"
+    if name in MICROPYTHON_TARGET_CHOICES:
+        return "unknown"
     if "RP2350" in name or "PICO2" in name:
         return "unknown"
     if "RP2040" in name:
@@ -102,10 +110,18 @@ def is_micropython_target(chip: str | None) -> bool:
     return detect_target_platform(chip) in {"rp2040", "esp"}
 
 
+def is_generic_micropython_name(chip: str | None) -> bool:
+    """Return whether the input asks Gary to auto-detect a MicroPython board."""
+
+    return normalize_target_name(chip) in MICROPYTHON_TARGET_CHOICES
+
+
 def canonical_target_name(chip: str | None) -> str:
     """Return a stable display / storage name for the selected target."""
 
     name = normalize_target_name(chip)
+    if name in MICROPYTHON_TARGET_CHOICES:
+        return "MICROPYTHON"
     platform = detect_target_platform(name)
     if platform == "rp2040":
         if name in {"PICO_W", "RPI_PICO_W", "RASPBERRY_PI_PICO_W"}:
@@ -140,6 +156,41 @@ def canonical_target_name(chip: str | None) -> str:
     return name or "STM32F103C8T6"
 
 
+def canonical_target_name_from_micropython_info(info: dict[str, str] | None) -> str | None:
+    """Infer Gary's canonical chip name from MicroPython runtime probe info."""
+
+    data = info or {}
+    fields = [
+        str(data.get("platform") or ""),
+        str(data.get("machine") or ""),
+        str(data.get("sysname") or ""),
+        str(data.get("release") or ""),
+        str(data.get("version") or ""),
+    ]
+    text = " ".join(fields).strip().lower()
+    compact = re.sub(r"[\s_\-]+", "", text)
+
+    if "pico w" in text or "picow" in compact:
+        return "PICO_W"
+    if "raspberry pi pico" in text or " pico" in text or compact.startswith("pico"):
+        return "PICO"
+    if "rp2040" in compact or str(data.get("platform") or "").strip().lower() == "rp2":
+        return "RP2040"
+
+    esp_patterns = (
+        ("ESP32C6", ("esp32-c6", "esp32 c6", "esp32c6")),
+        ("ESP32C3", ("esp32-c3", "esp32 c3", "esp32c3")),
+        ("ESP32S3", ("esp32-s3", "esp32 s3", "esp32s3")),
+        ("ESP32S2", ("esp32-s2", "esp32 s2", "esp32s2")),
+        ("ESP8266", ("esp8266", "nodemcu", "d1 mini", "wemos d1")),
+        ("ESP32", ("esp32", "lolin32", "nodemcu-32s", "wroom32")),
+    )
+    for chip_name, patterns in esp_patterns:
+        if any(pattern in text or pattern.replace("-", "").replace(" ", "") in compact for pattern in patterns):
+            return chip_name
+    return None
+
+
 def source_filename_for_target(chip: str | None) -> str:
     """Return the canonical source filename for the current platform."""
 
@@ -158,10 +209,13 @@ def target_runtime_label(chip: str | None) -> str:
 
 
 __all__ = [
+    "MICROPYTHON_TARGET_CHOICES",
     "ESP_TARGET_CHOICES",
     "RP2040_TARGET_CHOICES",
+    "canonical_target_name_from_micropython_info",
     "canonical_target_name",
     "detect_target_platform",
+    "is_generic_micropython_name",
     "is_esp_target",
     "is_micropython_target",
     "is_rp2040_target",
