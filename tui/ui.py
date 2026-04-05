@@ -203,6 +203,8 @@ def run_doctor(*, cli_text: Callable[[str, str], str]) -> None:
         _mask_key,
         _read_ai_config,
         get_ai_client,
+        probe_ai_connection,
+        provider_name,
         reload_ai_config,
     )
     from config import WORKSPACE
@@ -214,16 +216,17 @@ def run_doctor(*, cli_text: Callable[[str, str], str]) -> None:
     all_ok = True
 
     console.print("[bold]■ AI 接口[/]")
-    cur_key, cur_url, cur_model = _read_ai_config()
+    cur_key, cur_url, cur_model, cur_style = _read_ai_config()
     ai_configured = bool(cur_key and not _api_key_is_placeholder(cur_key))
     if ai_configured:
         console.print(f"  [green]✓[/] API Key   {_mask_key(cur_key)}")
+        console.print(f"  [green]✓[/] Interface {provider_name(cur_url, cur_model, cur_style)}")
         console.print(f"  [green]✓[/] Base URL  {cur_url}")
         console.print(f"  [green]✓[/] Model     {cur_model}")
         try:
             reload_ai_config()
             client = get_ai_client(timeout=8.0, force_reload=True)
-            client.models.list()
+            probe_ai_connection(client=client, timeout=8.0)
             console.print("  [green]✓[/] API 连通性  [dim]测试通过[/]")
         except Exception as exc:
             err_msg = str(exc)[:80]
