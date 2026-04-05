@@ -13,6 +13,5 @@ Pillow
 # ── 可选依赖 ──────────────────────────────────────────────────
 beautifulsoup4
 python-docx
-pyautogui
 PyMuPDF
 PyPDF2

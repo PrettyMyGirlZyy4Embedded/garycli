@@ -929,7 +929,6 @@ PYTHON_PKGS = [
     ("bs4", "beautifulsoup4", False),
     ("docx", "python-docx", False),
     ("PIL", "Pillow", True),
-    ("pyautogui", "pyautogui", False),
 ]
 
 
