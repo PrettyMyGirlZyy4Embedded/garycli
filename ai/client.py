@@ -28,12 +28,7 @@ _AI_PRESETS = [
         "gemini-2.5-flash",
         "gemini",
     ),
-    (
-        "通义千问 (阿里云)",
-        "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "qwen-plus",
-        "openai",
-    ),
+    ("通义千问 (阿里云)", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus", "openai"),
     ("智谱 GLM", "https://open.bigmodel.cn/api/paas/v4/", "glm-4-flash", "openai"),
     ("Ollama (本地)", "http://127.0.0.1:11434/v1", "qwen2.5-coder:14b", "openai"),
     ("自定义 / Other", "", "", ""),
@@ -222,12 +217,7 @@ def _read_ai_config() -> tuple[str, str, str, str]:
     """Read `(api_key, base_url, model, api_style)` from `config.py`."""
 
     if not _CONFIG_PATH.exists():
-        return (
-            AI_API_KEY,
-            AI_BASE_URL,
-            AI_MODEL,
-            _normalize_api_style(AI_API_STYLE, default="") or "",
-        )
+        return AI_API_KEY, AI_BASE_URL, AI_MODEL, _normalize_api_style(AI_API_STYLE, default="") or ""
     text = _CONFIG_PATH.read_text(encoding="utf-8")
 
     def _get(pattern: str) -> str:
@@ -535,9 +525,7 @@ def probe_ai_connection(client: Any | None = None, timeout: float = 8.0) -> None
                 message = (payload.get("error") or {}).get("message") or response.text
             except Exception:
                 message = response.text
-            raise RuntimeError(
-                f"Anthropic probe failed: HTTP {response.status_code}: {message[:200]}"
-            )
+            raise RuntimeError(f"Anthropic probe failed: HTTP {response.status_code}: {message[:200]}")
         return
 
     active_client.models.list()
@@ -590,9 +578,7 @@ def _tool_message_to_anthropic_result_block(message: dict[str, Any]) -> dict[str
     return result
 
 
-def _messages_to_anthropic_payload(
-    messages: list[dict[str, Any]],
-) -> tuple[str, list[dict[str, Any]]]:
+def _messages_to_anthropic_payload(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
     """Convert Gary's OpenAI-style history into Anthropic `system` + `messages`."""
 
     system_parts: list[str] = []
@@ -618,10 +604,7 @@ def _messages_to_anthropic_payload(
 
         if role == "tool":
             blocks: list[dict[str, Any]] = []
-            while (
-                idx < len(messages)
-                and str(messages[idx].get("role") or "").strip().lower() == "tool"
-            ):
+            while idx < len(messages) and str(messages[idx].get("role") or "").strip().lower() == "tool":
                 blocks.append(_tool_message_to_anthropic_result_block(messages[idx]))
                 idx += 1
             if blocks:
