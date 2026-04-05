@@ -1,0 +1,171 @@
+"""Target-platform detection and naming helpers."""
+
+from __future__ import annotations
+
+import re
+
+RP2040_TARGET_CHOICES = (
+    "RP2040",
+    "PICO",
+    "PICO_W",
+    "RPI_PICO",
+    "RPI_PICO_W",
+    "RASPBERRY_PI_PICO",
+    "RASPBERRY_PI_PICO_W",
+)
+ESP_TARGET_CHOICES = (
+    "ESP32",
+    "ESP32-DEVKITC",
+    "NODEMCU-32S",
+    "LOLIN32",
+    "LOLIN-D32",
+    "WROOM32",
+    "ESP32S2",
+    "ESP32_S2",
+    "ESP32-S2",
+    "ESP32S3",
+    "ESP32_S3",
+    "ESP32-S3",
+    "ESP32C3",
+    "ESP32_C3",
+    "ESP32-C3",
+    "ESP32C6",
+    "ESP32_C6",
+    "ESP32-C6",
+    "ESP8266",
+    "NODEMCU",
+    "D1_MINI",
+    "D1-MINI",
+    "WEMOS_D1_MINI",
+    "WEMOS-D1-MINI",
+    "ESP-01",
+    "ESP_01",
+    "ESP12E",
+    "ESP12F",
+)
+
+
+def normalize_target_name(value: str | None) -> str:
+    """Normalize a user-provided target name for matching."""
+
+    text = re.sub(r"[\s\-]+", "_", str(value or "").strip().upper())
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text
+
+
+def detect_target_platform(chip: str | None) -> str:
+    """Return the platform identifier for the selected target."""
+
+    name = normalize_target_name(chip)
+    if not name:
+        return "stm32"
+    if "RP2350" in name or "PICO2" in name:
+        return "unknown"
+    if "RP2040" in name:
+        return "rp2040"
+    if name in RP2040_TARGET_CHOICES or name.startswith("PICO_") or name == "PICO":
+        return "rp2040"
+    if "ESP32" in name or "ESP8266" in name:
+        return "esp"
+    if (
+        name in ESP_TARGET_CHOICES
+        or name.startswith("NODEMCU")
+        or name.startswith("WEMOS")
+        or name.startswith("LOLIN")
+        or name.startswith("WROOM32")
+        or name.startswith("ESP32_DEVKIT")
+        or name.startswith("ESP01")
+        or name.startswith("ESP_01")
+        or name.startswith("ESP12")
+    ):
+        return "esp"
+    if name.startswith("STM32"):
+        return "stm32"
+    return "unknown"
+
+
+def is_rp2040_target(chip: str | None) -> bool:
+    """Return whether the selected target is handled by the RP2040 workflow."""
+
+    return detect_target_platform(chip) == "rp2040"
+
+
+def is_esp_target(chip: str | None) -> bool:
+    """Return whether the selected target is handled by the ESP MicroPython workflow."""
+
+    return detect_target_platform(chip) == "esp"
+
+
+def is_micropython_target(chip: str | None) -> bool:
+    """Return whether the selected target uses the serial MicroPython workflow."""
+
+    return detect_target_platform(chip) in {"rp2040", "esp"}
+
+
+def canonical_target_name(chip: str | None) -> str:
+    """Return a stable display / storage name for the selected target."""
+
+    name = normalize_target_name(chip)
+    platform = detect_target_platform(name)
+    if platform == "rp2040":
+        if name in {"PICO_W", "RPI_PICO_W", "RASPBERRY_PI_PICO_W"}:
+            return "PICO_W"
+        if name in {"PICO", "RPI_PICO", "RASPBERRY_PI_PICO"}:
+            return "PICO"
+        return "RP2040"
+    if platform == "esp":
+        if name in {
+            "NODEMCU",
+            "D1_MINI",
+            "WEMOS_D1_MINI",
+            "ESP01",
+            "ESP_01",
+            "ESP12E",
+            "ESP12F",
+        }:
+            return "ESP8266"
+        if name in {"ESP32_DEVKITC", "NODEMCU_32S", "LOLIN32", "LOLIN_D32", "WROOM32"}:
+            return "ESP32"
+        if name in {"ESP32_S2", "ESP32S2"}:
+            return "ESP32S2"
+        if name in {"ESP32_S3", "ESP32S3"}:
+            return "ESP32S3"
+        if name in {"ESP32_C3", "ESP32C3"}:
+            return "ESP32C3"
+        if name in {"ESP32_C6", "ESP32C6"}:
+            return "ESP32C6"
+        if name == "ESP8266":
+            return "ESP8266"
+        return "ESP32"
+    return name or "STM32F103C8T6"
+
+
+def source_filename_for_target(chip: str | None) -> str:
+    """Return the canonical source filename for the current platform."""
+
+    return "main.py" if is_micropython_target(chip) else "main.c"
+
+
+def target_runtime_label(chip: str | None) -> str:
+    """Return a short runtime label for UI and tool status."""
+
+    platform = detect_target_platform(chip)
+    if platform in {"rp2040", "esp"}:
+        return "MicroPython"
+    if platform == "stm32":
+        return "STM32 HAL"
+    return "Unknown"
+
+
+__all__ = [
+    "ESP_TARGET_CHOICES",
+    "RP2040_TARGET_CHOICES",
+    "canonical_target_name",
+    "detect_target_platform",
+    "is_esp_target",
+    "is_micropython_target",
+    "is_rp2040_target",
+    "normalize_target_name",
+    "source_filename_for_target",
+    "target_runtime_label",
+]

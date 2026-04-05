@@ -1,4 +1,4 @@
-"""Shared runtime state for the STM32 agent."""
+"""Shared runtime state for Gary hardware workflows."""
 
 from __future__ import annotations
 

@@ -23,8 +23,9 @@ def _default_member_content() -> str:
 
 ## Focus
 - 这里只记录高价值、可复用、能提高成功率的经验。
-- 自动写入：成功编译、成功运行闭环。
+- 自动写入：关闭。由 Gary 自主决定何时写入或删除经验。
 - 主动写入：遇到关键初始化顺序、硬件坑、寄存器判定经验、稳定模板时，调用 `gary_save_member_memory`。
+- 主动删除：发现错误、过时、无用经验时，调用 `gary_delete_member_memory`。
 - 经验必须短、具体、可执行，不要粘贴大段原始日志。
 
 ## Memories
@@ -214,6 +215,79 @@ def gary_save_member_memory(
     )
 
 
+def gary_delete_member_memory(
+    query: str,
+    *,
+    dry_run: bool = False,
+    include_pinned: bool = False,
+    max_matches: int = 10,
+) -> dict[str, Any]:
+    """Delete matching entries from `member.md` by query."""
+
+    needle = _normalize_member_text(query, limit=120)
+    if len(needle) < 2:
+        return {"success": False, "message": "query 至少需要 2 个字符"}
+
+    with _MEMBER_LOCK:
+        path = _ensure_member_file()
+        current = path.read_text(encoding="utf-8")
+        header, entries = _split_member_content(current)
+
+        matched: list[str] = []
+        kept: list[str] = []
+        normalized_needle = needle.lower()
+        for entry in entries:
+            is_pinned = entry.startswith("### [Pinned]")
+            haystack = re.sub(r"\s+", " ", entry).lower()
+            if normalized_needle in haystack and (include_pinned or not is_pinned):
+                matched.append(entry)
+            else:
+                kept.append(entry)
+
+        if not matched:
+            return {
+                "success": False,
+                "path": str(path),
+                "message": f"未找到匹配经验: {needle}",
+                "matched_titles": [],
+            }
+
+        if max_matches > 0 and len(matched) > max_matches:
+            titles = [entry.splitlines()[0].removeprefix("### ").strip() for entry in matched[:max_matches]]
+            return {
+                "success": False,
+                "path": str(path),
+                "message": f"匹配经验过多 ({len(matched)})，请给出更精确的 query",
+                "matched_titles": titles,
+                "match_count": len(matched),
+            }
+
+        titles = [entry.splitlines()[0].removeprefix("### ").strip() for entry in matched]
+        if dry_run:
+            return {
+                "success": True,
+                "dry_run": True,
+                "path": str(path),
+                "matched_titles": titles,
+                "match_count": len(matched),
+                "message": f"将删除 {len(matched)} 条经验（dry_run）",
+            }
+
+        updated = header.rstrip()
+        if kept:
+            updated += "\n\n" + "\n\n".join(kept)
+        path.write_text(updated.strip() + "\n", encoding="utf-8")
+
+    return {
+        "success": True,
+        "dry_run": False,
+        "path": str(path),
+        "deleted_titles": titles,
+        "deleted_count": len(titles),
+        "message": f"已删除 {len(titles)} 条经验",
+    }
+
+
 def _infer_code_tags(code: str) -> list[str]:
     """Infer compact tags from a generated STM32 source file."""
 
@@ -272,53 +346,10 @@ def _record_success_memory(
     chip: str = "",
     log_error: Callable[[str], None] | None = None,
 ) -> None:
-    """Persist compile/runtime success summaries into `member.md`."""
+    """Compatibility no-op: member entries must be written explicitly by Gary."""
 
-    try:
-        tags = _infer_code_tags(code)
-        chip_name = _normalize_member_text(chip or "UNKNOWN", limit=40) or "UNKNOWN"
-        mode = "rtos" if "rtos" in tags else "baremetal"
-        short_request = _normalize_member_text(request, limit=60)
-        if event_type == "runtime_success":
-            title = f"运行成功闭环 | {chip_name} | {mode}"
-            if short_request:
-                title += f" | {short_request}"
-        else:
-            title = f"编译成功模板 | {chip_name} | {mode}"
-
-        lines: list[str] = []
-        if short_request:
-            lines.append(f"需求: {short_request}")
-        if result and result.get("bin_size"):
-            lines.append(f"bin_size: {result['bin_size']} B")
-        if tags:
-            lines.append(f"特征: {', '.join(tags[:8])}")
-        if event_type == "runtime_success":
-            lines.append("烧录、启动、串口/寄存器验证通过，无 HardFault、无硬件缺失。")
-            uart_step = next((step for step in (steps or []) if step.get("step") == "uart"), None)
-            reg_step = next(
-                (step for step in (steps or []) if step.get("step") == "registers"),
-                None,
-            )
-            if uart_step and uart_step.get("boot_ok"):
-                lines.append("串口已看到 Gary:BOOT，启动链路正常。")
-            if reg_step and reg_step.get("key_regs"):
-                reg_names = list(reg_step["key_regs"].keys())[:6]
-                lines.append(f"运行时已回读关键寄存器: {', '.join(reg_names)}")
-        else:
-            lines.append("当前代码已在本机工具链上成功编译通过。")
-        lines.extend(_derive_success_patterns_from_code(code))
-
-        _append_member_memory(
-            title=title,
-            experience="\n".join(lines),
-            tags=tags,
-            source=event_type,
-            importance="critical" if event_type == "runtime_success" else "high",
-        )
-    except Exception as exc:
-        if log_error is not None:
-            log_error(f"member auto_save error={str(exc)[:160]}")
+    del event_type, code, result, request, steps, chip, log_error
+    return None
 
 
 def _member_preview_markdown(max_dynamic: int = 10, path_label: str = "Path") -> str:
@@ -345,10 +376,13 @@ __all__ = [
     "MEMBER_PROMPT_MAX_DYNAMIC",
     "_MEMBER_LOCK",
     "_append_member_memory",
+    "_derive_success_patterns_from_code",
     "_ensure_member_file",
+    "_infer_code_tags",
     "_member_preview_markdown",
     "_prune_member_content",
     "_record_success_memory",
     "_split_member_content",
+    "gary_delete_member_memory",
     "gary_save_member_memory",
 ]
