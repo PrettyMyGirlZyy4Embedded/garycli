@@ -156,7 +156,11 @@ def upload_text_file(
     try:
         raw = _enter_raw_repl(ser, console=console)
         if not raw.get("success"):
-            return {"success": False, "message": raw.get("message", "进入 raw REPL 失败"), "port": port}
+            return {
+                "success": False,
+                "message": raw.get("message", "进入 raw REPL 失败"),
+                "port": port,
+            }
 
         result = _exec_raw(ser, _build_write_script(device_path, content), timeout=12.0)
         if not result.get("success"):
@@ -221,7 +225,11 @@ def list_remote_files(
     try:
         raw = _enter_raw_repl(ser, console=console)
         if not raw.get("success"):
-            return {"success": False, "message": raw.get("message", "进入 raw REPL 失败"), "port": port}
+            return {
+                "success": False,
+                "message": raw.get("message", "进入 raw REPL 失败"),
+                "port": port,
+            }
         result = _exec_raw(ser, script, timeout=6.0)
         if not result.get("success"):
             return {
