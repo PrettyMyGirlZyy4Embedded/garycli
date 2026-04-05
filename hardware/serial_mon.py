@@ -1,4 +1,4 @@
-"""Serial monitor helpers for STM32 runtime IO."""
+"""Serial monitor helpers for Gary runtime IO."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def _console_print(console: Any, message: str) -> None:
 
 
 def detect_serial_ports(verbose: bool = False, *, console: Any = None) -> list[str]:
-    """Scan available serial ports and prioritize likely STM32 targets."""
+    """Scan available serial ports and prioritize likely USB device targets."""
 
     import glob
     import platform
