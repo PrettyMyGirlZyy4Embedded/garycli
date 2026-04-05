@@ -1,11 +1,10 @@
 """Gary core runtime, agent loop, and CLI orchestration."""
 
 import argparse
-import sys, os, json, re, time, shutil, subprocess, threading, shlex
+import sys, os, json, re, time, subprocess
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional, Any, Callable
-import requests
 from gary_skills import _get_manager
 
 # 以项目根目录作为运行锚点，避免模块迁移后相对路径失效。
@@ -17,22 +16,79 @@ import ai.client as _ai_client_module
 import config as _cfg
 import compiler as _compiler_module
 from ai.client import (
-    _AI_PRESETS,
     _ai_is_configured,
-    _api_key_is_placeholder,
-    _mask_key,
-    _read_ai_config,
-    _write_ai_config,
     _write_cli_language_config,
     get_ai_client,
     reload_ai_config,
     stream_chat,
 )
 from ai.tools import TOOL_SCHEMAS, bind_tool_implementations, dispatch_tool_call
+from core.cli_config import configure_ai_cli as _configure_ai_cli_impl
+from core.docx_tools import (
+    append_docx_content,
+    inspect_docx_structure,
+    insert_docx_content_after_heading,
+    read_docx,
+    replace_docx_text,
+)
+from core.font_tools import stm32_generate_font
+from core.generic_tools import (
+    append_file_content,
+    ask_human,
+    check_python_code,
+    create_or_overwrite_file,
+    edit_file_lines,
+    execute_batch_commands,
+    execute_command,
+    fetch_url,
+    get_current_time,
+    git_commit,
+    git_diff,
+    git_status,
+    grep_search,
+    insert_content_by_regex,
+    list_directory,
+    read_file,
+    run_python_code,
+    search_files,
+    str_replace_edit,
+    web_search,
+)
 from core.memory import (
     _append_member_memory,
     _record_success_memory,
+    gary_delete_member_memory,
     gary_save_member_memory,
+)
+from core.platforms import (
+    canonical_target_name,
+    detect_target_platform,
+    is_micropython_target,
+    target_runtime_label,
+)
+from core.esp_tools import (
+    esp_auto_sync_cycle as _esp_auto_sync_cycle_impl,
+    esp_compile as _esp_compile_impl,
+    esp_connect as _esp_connect_impl,
+    esp_flash as _esp_flash_impl,
+    esp_hardware_status as _esp_hardware_status_impl,
+    esp_list_files_tool as _esp_list_files_impl,
+)
+from core.project_store import (
+    latest_workspace_main_path,
+    list_projects as _list_projects_impl,
+    read_project as _read_project_impl,
+    save_code as _save_code_impl,
+    save_project as _save_project_impl,
+    sync_latest_workspace,
+)
+from core.rp2040_tools import (
+    rp2040_auto_sync_cycle as _rp2040_auto_sync_cycle_impl,
+    rp2040_compile as _rp2040_compile_impl,
+    rp2040_connect as _rp2040_connect_impl,
+    rp2040_flash as _rp2040_flash_impl,
+    rp2040_hardware_status as _rp2040_hardware_status_impl,
+    rp2040_list_files_tool as _rp2040_list_files_impl,
 )
 from core.state import get_context
 from hardware.serial_mon import (
@@ -365,178 +421,238 @@ def _get_serial() -> SerialMonitor:
     return ctx.serial
 
 
+def _current_target(chip: str | None = None) -> str:
+    """Return the canonical target name for routing tool implementations."""
+
+    ctx = get_context()
+    fallback = ctx.chip or DEFAULT_CHIP
+    return canonical_target_name(chip or fallback)
+
+
+def _current_platform(chip: str | None = None) -> str:
+    """Return the active platform identifier."""
+
+    return detect_target_platform(_current_target(chip))
+
+
+def _micropython_not_supported(tool_name: str, guidance: str = "") -> dict:
+    """Return a consistent not-supported response for MicroPython targets."""
+
+    target = _current_target()
+    message = f"{tool_name} 不适用于 {target} MicroPython"
+    if guidance:
+        message += f"；{guidance}"
+    return {
+        "success": False,
+        "platform": _current_platform(target),
+        "message": message,
+    }
+
+
+def rp2040_connect(chip: str = None, port: str = None, baud: int = None) -> dict:
+    """Connect an RP2040 board over USB serial."""
+
+    return _rp2040_connect_impl(
+        chip,
+        port=port,
+        baud=baud or SERIAL_BAUD,
+        console=CONSOLE,
+    )
+
+
+def rp2040_hardware_status() -> dict:
+    """Return RP2040 + MicroPython runtime status."""
+
+    return _rp2040_hardware_status_impl(console=CONSOLE)
+
+
+def rp2040_compile(code: str, chip: str = None) -> dict:
+    """Validate and cache RP2040 MicroPython source."""
+
+    return _rp2040_compile_impl(
+        code,
+        chip=chip,
+        console=CONSOLE,
+        record_success_memory=_record_success_memory,
+        log_error=telegram_log,
+    )
+
+
+def rp2040_flash(file_path: str = None, port: str = None, baud: int = None) -> dict:
+    """Deploy `main.py` to the connected RP2040 board."""
+
+    if file_path and str(file_path).lower().endswith(".bin"):
+        return {
+            "success": False,
+            "platform": "rp2040",
+            "message": "RP2040 MicroPython 部署的是 .py 源文件，不是 .bin 固件",
+        }
+    return _rp2040_flash_impl(
+        file_path=file_path,
+        port=port,
+        baud=baud or SERIAL_BAUD,
+        console=CONSOLE,
+        capture_timeout=POST_FLASH_DELAY + 1.5,
+    )
+
+
+def rp2040_auto_sync_cycle(code: str, request: str = "") -> dict:
+    """Validate, deploy, and observe an RP2040 MicroPython program."""
+
+    return _rp2040_auto_sync_cycle_impl(
+        code,
+        request=request,
+        baud=SERIAL_BAUD,
+        console=CONSOLE,
+        max_attempts=MAX_DEBUG_ATTEMPTS,
+        record_success_memory=_record_success_memory,
+        log_error=telegram_log,
+    )
+
+
+def rp2040_list_files(path: str = ".", port: str = None, baud: int = None) -> dict:
+    """List files on the connected MicroPython board."""
+
+    return _rp2040_list_files_impl(
+        path=path,
+        port=port,
+        baud=baud or SERIAL_BAUD,
+        console=CONSOLE,
+    )
+
+
+def esp_connect(chip: str = None, port: str = None, baud: int = None) -> dict:
+    """Connect an ESP32 / ESP8266 board over USB serial."""
+
+    return _esp_connect_impl(
+        chip,
+        port=port,
+        baud=baud or SERIAL_BAUD,
+        console=CONSOLE,
+    )
+
+
+def esp_hardware_status() -> dict:
+    """Return ESP + MicroPython runtime status."""
+
+    return _esp_hardware_status_impl(console=CONSOLE)
+
+
+def esp_compile(code: str, chip: str = None) -> dict:
+    """Validate and cache ESP MicroPython source."""
+
+    return _esp_compile_impl(
+        code,
+        chip=chip,
+        console=CONSOLE,
+        record_success_memory=_record_success_memory,
+        log_error=telegram_log,
+    )
+
+
+def esp_flash(file_path: str = None, port: str = None, baud: int = None) -> dict:
+    """Deploy `main.py` to the connected ESP MicroPython board."""
+
+    if file_path and str(file_path).lower().endswith(".bin"):
+        return {
+            "success": False,
+            "platform": "esp",
+            "message": "ESP MicroPython 部署的是 .py 源文件，不是 .bin 固件",
+        }
+    return _esp_flash_impl(
+        file_path=file_path,
+        port=port,
+        baud=baud or SERIAL_BAUD,
+        console=CONSOLE,
+        capture_timeout=POST_FLASH_DELAY + 1.5,
+    )
+
+
+def esp_auto_sync_cycle(code: str, request: str = "") -> dict:
+    """Validate, deploy, and observe an ESP MicroPython program."""
+
+    return _esp_auto_sync_cycle_impl(
+        code,
+        request=request,
+        baud=SERIAL_BAUD,
+        console=CONSOLE,
+        max_attempts=MAX_DEBUG_ATTEMPTS,
+        record_success_memory=_record_success_memory,
+        log_error=telegram_log,
+    )
+
+
+def esp_list_files(path: str = ".", port: str = None, baud: int = None) -> dict:
+    """List files on the connected ESP MicroPython board."""
+
+    return _esp_list_files_impl(
+        path=path,
+        port=port,
+        baud=baud or SERIAL_BAUD,
+        console=CONSOLE,
+    )
+
+
+def _micropython_connect_for_target(chip: str, port: str | None = None, baud: int | None = None) -> dict:
+    platform = detect_target_platform(chip)
+    if platform == "rp2040":
+        return rp2040_connect(chip, port=port, baud=baud)
+    return esp_connect(chip, port=port, baud=baud)
+
+
+def _micropython_hardware_status_for_target(chip: str) -> dict:
+    platform = detect_target_platform(chip)
+    if platform == "rp2040":
+        return rp2040_hardware_status()
+    return esp_hardware_status()
+
+
+def _micropython_compile_for_target(code: str, chip: str) -> dict:
+    platform = detect_target_platform(chip)
+    if platform == "rp2040":
+        return rp2040_compile(code, chip=chip)
+    return esp_compile(code, chip=chip)
+
+
+def _micropython_flash_for_target(
+    chip: str,
+    *,
+    file_path: str | None = None,
+    port: str | None = None,
+    baud: int | None = None,
+) -> dict:
+    platform = detect_target_platform(chip)
+    if platform == "rp2040":
+        return rp2040_flash(file_path=file_path, port=port, baud=baud)
+    return esp_flash(file_path=file_path, port=port, baud=baud)
+
+
+def _micropython_auto_sync_for_target(code: str, chip: str, request: str = "") -> dict:
+    platform = detect_target_platform(chip)
+    if platform == "rp2040":
+        return rp2040_auto_sync_cycle(code, request=request)
+    return esp_auto_sync_cycle(code, request=request)
+
+
 # ─────────────────────────────────────────────────────────────
 # STM32 专属工具实现
 # ─────────────────────────────────────────────────────────────
 
 
-def stm32_generate_font(text: str, size: int = 16) -> dict:
-    """
-    将任意文字（含中文）渲染为 STM32 OLED 用的 C 点阵数组。
-    固定使用「横向取模·高位在前（row-major, MSB=left）」格式——
-    这是最直观、与 SSD1306 逐行刷新最匹配的格式，配套显示函数一并生成。
-    返回 c_code（字模数组 + 完整显示函数），直接粘贴进 main.c 使用。
-    """
-    try:
-        from PIL import Image, ImageDraw, ImageFont
-    except ImportError:
-        return {"success": False, "message": "需要安装 Pillow: pip install Pillow"}
-
-    import platform as _plat
-
-    # 跨平台字体候选
-    def _find_cjk_font() -> Optional[str]:
-        """动态查找系统 CJK 字体路径"""
-        # 优先用 fc-match（Linux/macOS）
-        try:
-            r = subprocess.run(
-                ["fc-match", "--format=%{file}", ":lang=zh"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if r.returncode == 0 and r.stdout.strip():
-                path = r.stdout.strip()
-                if os.path.exists(path):
-                    return path
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-
-        # 回退到硬编码候选列表
-        candidates = [
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/truetype/arphic/uming.ttc",
-            "/usr/share/fonts/truetype/arphic/ukai.ttc",
-            "/System/Library/Fonts/PingFang.ttc",
-            "/Library/Fonts/Arial Unicode.ttf",
-            "C:/Windows/Fonts/msyh.ttc",
-            "C:/Windows/Fonts/simhei.ttf",
-            "C:/Windows/Fonts/simsun.ttc",
-        ]
-        for p in candidates:
-            if os.path.exists(p):
-                return p
-        return None
-        # 原来的 for fp in font_candidates: ... 全部替换为：
-
-    font_path = _find_cjk_font()
-    if font_path is None:
-        return {"success": False, "message": "未找到中文字体，请安装 fonts-noto-cjk"}
-    try:
-        font = ImageFont.truetype(font_path, size)
-    except Exception as e:
-        return {"success": False, "message": f"字体加载失败 ({font_path}): {e}"}
-
-    def _render_char(char: str) -> list:
-        """渲染单个字符到 size×size 位图，返回 0/1 列表（行优先）"""
-        img = Image.new("L", (size, size), 0)
-        draw = ImageDraw.Draw(img)
-        try:
-            bbox = font.getbbox(char)
-            char_w = bbox[2] - bbox[0]
-            char_h = bbox[3] - bbox[1]
-            # 水平居中，垂直顶对齐（避免因字体 metrics 差异被裁底部）
-            ox = (size - char_w) // 2 - bbox[0]
-            oy = -bbox[1]  # 让字符顶部与图像顶部对齐
-        except Exception:
-            ox, oy = 0, 0
-        draw.text((ox, oy), char, fill=255, font=font)
-        return [1 if p > 127 else 0 for p in img.getdata()]
-
-    def _to_row_msb(pixels: list) -> list:
-        """横向取模·高位在前：每行从左到右，bit7=最左列"""
-        data = []
-        bytes_per_row = (size + 7) // 8
-        for row in range(size):
-            for b in range(bytes_per_row):
-                byte = 0
-                for bit in range(8):
-                    col = b * 8 + bit
-                    if col < size and pixels[row * size + col]:
-                        byte |= 1 << (7 - bit)
-                data.append(byte)
-        return data
-
-    def _ascii_preview(pixels: list) -> str:
-        lines = []
-        for row in range(size):
-            lines.append("".join("█" if pixels[row * size + col] else "." for col in range(size)))
-        return "\n".join(lines)
-
-    chars_data = []
-    previews = []
-    char_list = []
-    for char in text:
-        pixels = _render_char(char)
-        data = _to_row_msb(pixels)
-        chars_data.append(data)
-        previews.append(_ascii_preview(pixels))
-        char_list.append(char)
-
-    bytes_per_char = size * ((size + 7) // 8)
-    fname = f"FONT_{size}x{size}"
-
-    # ── 字模数组 ──────────────────────────────────────────────
-    char_entries = []
-    for i, (char, data) in enumerate(zip(char_list, chars_data)):
-        preview_lines = previews[i].split("\n")
-        preview_comment = "  /* " + "  ".join(preview_lines[:4]) + " ... */"
-        hex_str = ", ".join(f"0x{b:02X}" for b in data)
-        char_repr = char if ord(char) < 128 else f"{char}(U+{ord(char):04X})"
-        char_entries.append(f"    /* [{i}] '{char_repr}' */\n    {{{hex_str}}}")
-
-    array_code = (
-        f"/* ═══ 字模数据：横向取模·高位在前 {size}x{size}px ═══\n"
-        f"   格式：每行 {(size+7)//8} 字节，bit7=最左列，共 {bytes_per_char} 字节/字符\n"
-        f"   字符表: {' '.join(repr(c) for c in char_list)} */\n"
-        f"static const uint8_t {fname}[][{bytes_per_char}] = {{\n"
-        + ",\n".join(char_entries)
-        + "\n};\n"
-    )
-
-    # ── 配套显示函数（与字模格式严格匹配）──────────────────────
-    display_func = f"""
-/* ═══ 配套显示函数（必须与上面字模数据一起使用）═══ */
-/* idx: 字符在 {fname} 中的下标（按字符表顺序） */
-/* x,y: OLED 列(0-127)和页起始行(0-63)         */
-void OLED_ShowFont{size}(uint8_t x, uint8_t y, uint8_t idx) {{
-    const uint8_t *p = {fname}[idx];
-    uint8_t bytes_per_row = {(size+7)//8};
-    for (uint8_t row = 0; row < {size}; row++) {{
-        OLED_SetCursor(x, y + row);   /* 设置到目标行 */
-        for (uint8_t b = 0; b < bytes_per_row; b++) {{
-            uint8_t byte = p[row * bytes_per_row + b];
-            for (int8_t bit = 7; bit >= 0; bit--) {{
-                uint8_t col = b * 8 + (7 - bit);
-                if (col < {size}) {{
-                    OLED_DrawPixel(x + col, y + row, (byte >> bit) & 1);
-                }}
-            }}
-        }}
-    }}
-}}
-/* 用法示例：显示字符表第0个字符在 (0,0) 位置
-   OLED_ShowFont{size}(0, 0, 0);  // 显示 '{char_list[0] if char_list else "?"}' */
-"""
-
-    # ── ASCII 预览（调试用）────────────────────────────────────
-    preview_block = "\n\n".join(f"/* '{c}':\n{p} */" for c, p in zip(char_list, previews))
-
-    c_code = array_code + display_func
-    return {
-        "success": True,
-        "c_code": c_code,
-        "preview": preview_block,  # ASCII 预览，可用于肉眼验证字形
-        "char_count": len(text),
-        "bytes_per_char": bytes_per_char,
-        "font_size": size,
-        "mode": "row_msb",
-        "char_order": char_list,
-    }
-
-
 def stm32_list_probes() -> dict:
     """列出所有可用的调试探针（ST-Link / CMSIS-DAP / J-Link）"""
+    if is_micropython_target(_current_target()):
+        ports = detect_serial_ports(verbose=False)
+        return {
+            "success": True,
+            "platform": _current_platform(),
+            "probes": [],
+            "ports": ports,
+            "message": (
+                f"{_current_target()} MicroPython 通过 USB 串口连接，无需 SWD 探针"
+                + (f"；检测到串口: {ports}" if ports else "；当前未检测到可用串口")
+            ),
+        }
     probes = list_swd_probes(console=CONSOLE)
     if not probes:
         return {"success": True, "probes": [], "message": "未检测到任何探针，请检查 USB 连接"}
@@ -546,9 +662,13 @@ def stm32_list_probes() -> dict:
 def stm32_connect(chip: str = None) -> dict:
     """连接 STM32 硬件（pyocd 探针 + 串口监控）"""
     ctx = get_context()
+    target_chip = _current_target(chip)
+    if is_micropython_target(target_chip):
+        ctx.chip = target_chip
+        return _micropython_connect_for_target(target_chip)
     swd_result = connect_swd(
         ctx,
-        chip,
+        target_chip,
         default_chip=DEFAULT_CHIP,
         register_read_delay=REGISTER_READ_DELAY,
         reg_map_factory=_reg_map,
@@ -557,7 +677,6 @@ def stm32_connect(chip: str = None) -> dict:
     bridge = swd_result.get("bridge")
     if isinstance(bridge, PyOCDBridge):
         ctx.bridge = bridge
-    target_chip = chip or ctx.chip or DEFAULT_CHIP
     if swd_result["success"]:
         ctx.hw_connected = True
         ctx.chip = bridge.chip_info.get("device", target_chip)
@@ -590,6 +709,8 @@ def stm32_serial_connect(port: str = None, baud: int = None) -> dict:
     if isinstance(monitor, SerialMonitor):
         ctx.serial = monitor
     ctx.serial_connected = bool(result.get("success"))
+    if is_micropython_target(ctx.chip):
+        ctx.hw_connected = ctx.serial_connected
     actual_port = getattr(ctx.serial, "port", None) or port or "自动检测"
     if ctx.serial_connected:
         return {
@@ -612,6 +733,8 @@ def stm32_serial_disconnect() -> dict:
     ctx = get_context()
     disconnect_serial(ctx)
     ctx.serial_connected = False
+    if is_micropython_target(ctx.chip):
+        ctx.hw_connected = False
     return {"success": True, "message": "串口已断开"}
 
 
@@ -628,7 +751,23 @@ def stm32_disconnect() -> dict:
 def stm32_set_chip(chip: str) -> dict:
     """切换目标芯片型号（如 STM32F103C8T6 / STM32F407VET6）"""
     ctx = get_context()
-    ctx.chip = chip.strip().upper()
+    previous_platform = detect_target_platform(ctx.chip)
+    ctx.chip = canonical_target_name(chip)
+    current_platform = detect_target_platform(ctx.chip)
+    if previous_platform != current_platform:
+        ctx.compiler = None
+        ctx.last_bin_path = None
+        if current_platform in {"rp2040", "esp"}:
+            disconnect_swd(ctx)
+            ctx.bridge = None
+    if current_platform in {"rp2040", "esp"}:
+        return {
+            "success": True,
+            "chip": ctx.chip,
+            "family": current_platform,
+            "platform": current_platform,
+            "runtime": "MicroPython",
+        }
     ci = _get_compiler().set_chip(ctx.chip)
     if ctx.hw_connected:
         _get_bridge().set_family(ci.get("family", "f1"))
@@ -638,6 +777,8 @@ def stm32_set_chip(chip: str) -> dict:
 def stm32_hardware_status() -> dict:
     """获取当前硬件连接状态和工具链可用性"""
     ctx = get_context()
+    if is_micropython_target(ctx.chip):
+        return _micropython_hardware_status_for_target(ctx.chip)
     ci = _get_compiler().check(ctx.chip)
     return {
         "chip": ctx.chip,
@@ -654,25 +795,28 @@ def stm32_hardware_status() -> dict:
 def stm32_compile(code: str, chip: str = None) -> dict:
     """编译 STM32 C 代码（完整 main.c）"""
     ctx = get_context()
+    target_chip = _current_target(chip)
+    ctx.chip = target_chip
+    if is_micropython_target(target_chip):
+        return _micropython_compile_for_target(code, target_chip)
     compiler = _get_compiler()
     if chip:
-        compiler.set_chip(chip.strip().upper())
+        compiler.set_chip(target_chip)
     result = compiler.compile(code)
+    sync_result = {"success": False}
     if result["ok"]:
         ctx.last_code = code
         ctx.last_bin_path = result.get("bin_path")
-        # 自动保存到 latest_workspace
-        try:
-            latest = Path.home() / ".stm32_agent" / "workspace" / "projects" / "latest_workspace"
-            latest.mkdir(parents=True, exist_ok=True)
-            (latest / "main.c").write_text(code, encoding="utf-8")
-        except Exception as e:
-            CONSOLE.print(f"[dim]  ⚠ 缓存保存失败: {e}[/]")
+        sync_result = sync_latest_workspace(code, chip=target_chip)
+        if not sync_result.get("success"):
+            CONSOLE.print(f"[dim]  ⚠ 缓存保存失败: {sync_result.get('message', '')}[/]")
     payload = {
         "success": result["ok"],
         "message": (result.get("msg") or "")[:600],
         "bin_path": result.get("bin_path"),
         "bin_size": result.get("bin_size", 0),
+        "source_path": sync_result.get("path"),
+        "source_file": sync_result.get("source_file"),
     }
     if payload["success"]:
         _record_success_memory(
@@ -688,24 +832,28 @@ def stm32_compile(code: str, chip: str = None) -> dict:
 def stm32_compile_rtos(code: str, chip: str = None) -> dict:
     """编译带 FreeRTOS 内核的完整 main.c 代码"""
     ctx = get_context()
+    target_chip = _current_target(chip)
+    ctx.chip = target_chip
+    if is_micropython_target(target_chip):
+        return _micropython_not_supported("stm32_compile_rtos", "请改用对应的 MicroPython compile 或 auto_sync_cycle 工具")
     compiler = _get_compiler()
     if chip:
-        compiler.set_chip(chip.strip().upper())
+        compiler.set_chip(target_chip)
     result = compiler.compile_rtos(code)
+    sync_result = {"success": False}
     if result["ok"]:
         ctx.last_code = code
         ctx.last_bin_path = result.get("bin_path")
-        try:
-            latest = Path.home() / ".stm32_agent" / "workspace" / "projects" / "latest_workspace"
-            latest.mkdir(parents=True, exist_ok=True)
-            (latest / "main.c").write_text(code, encoding="utf-8")
-        except Exception as e:
-            CONSOLE.print(f"[dim]  ⚠ 缓存保存失败: {e}[/]")
+        sync_result = sync_latest_workspace(code, chip=target_chip)
+        if not sync_result.get("success"):
+            CONSOLE.print(f"[dim]  ⚠ 缓存保存失败: {sync_result.get('message', '')}[/]")
     payload = {
         "success": result["ok"],
         "message": (result.get("msg") or "")[:600],
         "bin_path": result.get("bin_path"),
         "bin_size": result.get("bin_size", 0),
+        "source_path": sync_result.get("path"),
+        "source_file": sync_result.get("source_file"),
     }
     if payload["success"]:
         _record_success_memory(
@@ -723,11 +871,28 @@ def stm32_recompile(mode: str = "auto") -> dict:
     str_replace_edit 修改文件后调用此函数代替 read_file + stm32_compile。
     mode: "bare"(裸机) | "rtos"(FreeRTOS) | "auto"(自动检测，默认)
     """
-    latest = Path.home() / ".stm32_agent" / "workspace" / "projects" / "latest_workspace"
-    main_c = latest / "main.c"
-    if not main_c.exists():
-        return {"success": False, "message": "latest_workspace/main.c 不存在，请先编译一次完整代码"}
-    code = main_c.read_text(encoding="utf-8")
+    ctx = get_context()
+    source_path = latest_workspace_main_path(ctx.chip)
+    if not source_path.exists():
+        fallback_paths = [
+            latest_workspace_main_path("RP2040"),
+            latest_workspace_main_path(DEFAULT_CHIP),
+        ]
+        for candidate in fallback_paths:
+            if candidate.exists():
+                source_path = candidate
+                break
+    if not source_path.exists():
+        return {
+            "success": False,
+            "message": "latest_workspace 中不存在可重编译的 main.c / main.py，请先成功编译一次完整代码",
+        }
+    code = source_path.read_text(encoding="utf-8")
+    if source_path.suffix == ".py" or is_micropython_target(ctx.chip):
+        if mode == "rtos":
+            return _micropython_not_supported("stm32_recompile(mode='rtos')", "MicroPython 目标不支持 FreeRTOS 编译")
+        target_chip = ctx.chip if is_micropython_target(ctx.chip) else "ESP32"
+        return _micropython_compile_for_target(code, target_chip)
     if mode == "auto":
         mode = (
             "rtos"
@@ -744,6 +909,8 @@ def stm32_regen_bsp(chip: str = None) -> dict:
     每次修改 compiler/ 包或切换芯片后调用一次，确保构建文件是最新版本。
     自动检查 startup.s 是否包含 FPU 使能代码（Cortex-M4 必须）。
     """
+    if is_micropython_target(chip or _current_target()):
+        return _micropython_not_supported("stm32_regen_bsp", "MicroPython 目标不需要 BSP 生成")
     import importlib
 
     # 强制重载 compiler 包，绕过进程内缓存
@@ -812,6 +979,11 @@ def stm32_analyze_fault_rtos() -> dict:
     - 检查 startup.s 是否包含 FPU 初始化
     返回明确的根本原因和修复建议。
     """
+    if is_micropython_target(_current_target()):
+        return _micropython_not_supported(
+            "stm32_analyze_fault_rtos",
+            "MicroPython 目标应查看串口 Traceback，而不是 Cortex-M HardFault 寄存器",
+        )
     if not get_context().hw_connected:
         return {"success": False, "message": "硬件未连接"}
 
@@ -937,6 +1109,8 @@ def stm32_rtos_check_code(code: str) -> dict:
     """FreeRTOS 代码静态检查 —— 编译前捕获常见 RTOS 编程错误。
     检查 SysTick 冲突、HAL_Delay 陷阱、缺少 hook 函数、栈大小、ISR 安全等。
     """
+    if is_micropython_target(_current_target()):
+        return _micropython_not_supported("stm32_rtos_check_code", "MicroPython 目标不使用 FreeRTOS C 工程")
     import re
 
     errors = []
@@ -1083,6 +1257,8 @@ def stm32_rtos_task_stats() -> dict:
     从 ELF 符号表解析全局变量地址，读取任务数、堆使用、当前任务等。
     需要先编译（有 ELF 文件）并连接硬件。
     """
+    if is_micropython_target(_current_target()):
+        return _micropython_not_supported("stm32_rtos_task_stats", "MicroPython 目标没有这套 FreeRTOS 任务统计接口")
     if not get_context().hw_connected:
         return {"success": False, "message": "硬件未连接"}
 
@@ -1178,6 +1354,11 @@ def stm32_rtos_suggest_config(
     """根据用户的任务需求，计算推荐的 FreeRTOS 配置参数。
     估算堆大小、栈大小、优先级数，并检查 RAM 是否足够。
     """
+    if is_micropython_target(_current_target()):
+        return _micropython_not_supported(
+            "stm32_rtos_suggest_config",
+            "MicroPython 目标不需要 FreeRTOS heap/stack 配置估算",
+        )
     compiler = _get_compiler()
     ci = compiler._chip_info
     if ci is None:
@@ -1262,6 +1443,11 @@ def stm32_rtos_plan_project(
 
     AI 在规划复杂 RTOS 项目时必须先调用此工具，待用户确认后再写代码。
     """
+    if is_micropython_target(_current_target()):
+        return _micropython_not_supported(
+            "stm32_rtos_plan_project",
+            "MicroPython 目标应直接规划模块/协程/定时器结构，不使用 FreeRTOS 任务划分",
+        )
     import re
 
     compiler = _get_compiler()
@@ -1620,6 +1806,8 @@ def stm32_rtos_plan_project(
 def stm32_flash(bin_path: str = None) -> dict:
     """烧录固件到 STM32（需要先 connect + compile）"""
     ctx = get_context()
+    if is_micropython_target(ctx.chip):
+        return _micropython_flash_for_target(ctx.chip, file_path=bin_path)
     if not ctx.hw_connected:
         return {"success": False, "message": "硬件未连接，请先调用 stm32_connect"}
     path = bin_path or ctx.last_bin_path
@@ -1631,6 +1819,11 @@ def stm32_flash(bin_path: str = None) -> dict:
 
 def stm32_read_registers(regs: list = None) -> dict:
     """读取 STM32 硬件寄存器（RCC、GPIO、TIM、UART 等）"""
+    if is_micropython_target(_current_target()):
+        return _micropython_not_supported(
+            "stm32_read_registers",
+            "MicroPython 目标调试优先看串口输出、Traceback 和设备文件状态",
+        )
     if not get_context().hw_connected:
         return {"success": False, "message": "硬件未连接"}
     result = read_registers(get_context(), regs, debug_all=not regs)
@@ -1641,6 +1834,11 @@ def stm32_read_registers(regs: list = None) -> dict:
 
 def stm32_analyze_fault() -> dict:
     """读取并分析 HardFault 寄存器（SCB_CFSR / SCB_HFSR）"""
+    if is_micropython_target(_current_target()):
+        return _micropython_not_supported(
+            "stm32_analyze_fault",
+            "MicroPython 目标不会返回 STM32 HardFault；请查看串口 Traceback",
+        )
     if not get_context().hw_connected:
         return {"success": False, "message": "硬件未连接"}
     regs = _get_bridge().read_registers(["SCB_CFSR", "SCB_HFSR", "SCB_BFAR", "PC"])
@@ -1668,6 +1866,8 @@ def stm32_auto_flash_cycle(code: str, request: str = "") -> dict:
     返回每步结果 + 当前轮次 + 是否应放弃。
     """
     ctx = get_context()
+    if is_micropython_target(ctx.chip):
+        return _micropython_auto_sync_for_target(code, ctx.chip, request=request)
     ctx.debug_attempt += 1
     attempt = ctx.debug_attempt
     steps = []
@@ -1893,692 +2093,31 @@ def stm32_auto_flash_cycle(code: str, request: str = "") -> dict:
 
 def stm32_save_code(code: str, request: str = "untitled") -> dict:
     """保存代码到项目目录"""
-    comp_result = {"bin_path": None, "bin_size": 0}
-    path = _stm32_save_project(code, comp_result, request)
-    return {"success": True, "path": str(path), "message": f"已保存: {path}"}
+    ctx = get_context()
+    ctx.last_code = code
+    return _save_code_impl(code, request, chip=ctx.chip, console=CONSOLE)
 
 
 def _stm32_save_project(code: str, comp: dict, request: str) -> Path:
     """内部：保存项目文件"""
     ctx = get_context()
-    ts = time.strftime("%Y%m%d_%H%M%S")
-    safe = "".join(c if c.isalnum() or c in "_- " else "" for c in request[:30]).strip()
-    d = PROJECTS_DIR / f"{ts}_{safe}"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "main.c").write_text(code, encoding="utf-8")
-    if comp.get("bin_path") and Path(comp["bin_path"]).exists():
-        shutil.copy2(comp["bin_path"], d / "firmware.bin")
-    (d / "config.json").write_text(
-        json.dumps(
-            {
-                "chip": ctx.chip,
-                "request": request,
-                "bin_size": comp.get("bin_size", 0),
-                "timestamp": ts,
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
     ctx.last_code = code
-    # 同步更新 latest_workspace，保证 stm32_recompile 始终能找到最新代码
-    try:
-        latest = Path.home() / ".stm32_agent" / "workspace" / "projects" / "latest_workspace"
-        latest.mkdir(parents=True, exist_ok=True)
-        (latest / "main.c").write_text(code, encoding="utf-8")
-    except Exception:
-        pass
-    CONSOLE.print(f"[dim]  已保存: {d}[/]")
-    return d
+    return _save_project_impl(code, comp, request, chip=ctx.chip, console=CONSOLE)
 
 
 def stm32_list_projects() -> dict:
     """列出最近 15 个历史项目"""
-    if not PROJECTS_DIR.exists():
-        return {"success": True, "projects": [], "message": "暂无项目"}
-    projects = []
-    for p in sorted(PROJECTS_DIR.iterdir(), reverse=True)[:15]:
-        cf = p / "config.json"
-        if cf.exists():
-            try:
-                c = json.loads(cf.read_text(encoding="utf-8"))
-                projects.append(
-                    {
-                        "name": p.name,
-                        "chip": c.get("chip", "?"),
-                        "request": c.get("request", ""),
-                        "timestamp": c.get("timestamp", ""),
-                    }
-                )
-            except Exception:
-                pass
-    return {"success": True, "projects": projects}
+    return _list_projects_impl()
 
 
 def stm32_read_project(project_name: str) -> dict:
-    """读取指定项目的 main.c 代码"""
-    p = PROJECTS_DIR / project_name / "main.c"
-    if not p.exists():
-        return {"success": False, "message": f"项目不存在: {project_name}"}
-    code = p.read_text(encoding="utf-8")
-    return {"success": True, "code": code, "path": str(p), "lines": len(code.splitlines())}
+    """读取指定项目的主源码（STM32 为 main.c，MicroPython 目标为 main.py）"""
+    return _read_project_impl(project_name)
 
 
 # ─────────────────────────────────────────────────────────────
-# 通用文件/命令工具（来自 claude_terminal，简化版）
+# 通用文件/命令工具、Word 工具已拆分到独立模块
 # ─────────────────────────────────────────────────────────────
-
-
-def read_file(file_path: str) -> dict:
-    try:
-        p = Path(file_path).expanduser().resolve()
-        if not p.exists():
-            return {"error": f"文件不存在: {file_path}"}
-        content = p.read_text(encoding="utf-8", errors="ignore")
-        lines = content.splitlines()
-        numbered = "\n".join(f"{i+1:4d} | {l}" for i, l in enumerate(lines[:800]))
-        return {
-            "success": True,
-            "numbered_view": numbered,
-            "raw_content": content[:40000],
-            "total_lines": len(lines),
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def create_or_overwrite_file(file_path: str, content: str) -> dict:
-    try:
-        p = Path(file_path).expanduser().resolve()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content, encoding="utf-8")
-        return {"success": True, "path": str(p), "lines": len(content.splitlines())}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def str_replace_edit(file_path: str, old_str: str, new_str: str) -> dict:
-    try:
-        p = Path(file_path).expanduser().resolve()
-        if not p.exists():
-            return {"error": f"文件不存在: {file_path}"}
-        content = p.read_text(encoding="utf-8", errors="ignore")
-        count = content.count(old_str)
-        if count == 0:
-            return {"error": "未找到 old_str，请检查空格/换行是否完全一致"}
-        if count > 1:
-            return {"error": f"找到 {count} 个匹配，请增加上下文使其唯一"}
-        new_content = content.replace(old_str, new_str, 1)
-        p.write_text(new_content, encoding="utf-8")
-        return {"success": True, "message": "替换成功", "path": str(p)}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def list_directory(path: str = ".") -> dict:
-    try:
-        p = Path(path).expanduser().resolve()
-        items = [{"name": x.name, "type": "dir" if x.is_dir() else "file"} for x in p.iterdir()]
-        return {
-            "success": True,
-            "path": str(p),
-            "items": sorted(items, key=lambda x: (x["type"], x["name"])),
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def execute_command(command: str) -> dict:
-    if any(f in command for f in ["rm -rf /", ":(){ :|:& };:"]):
-        return {"error": "命令被安全策略拒绝"}
-    try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
-        return {
-            "success": result.returncode == 0,
-            "stdout": result.stdout[:3000],
-            "stderr": result.stderr[:1000],
-            "returncode": result.returncode,
-        }
-    except subprocess.TimeoutExpired:
-        return {"error": "命令超时（60s）"}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def search_files(query: str, path: str = ".", file_type: str = None) -> dict:
-    try:
-        results = []
-        for fp in Path(path).expanduser().resolve().rglob("*"):
-            if not fp.is_file():
-                continue
-            if query.lower() not in fp.name.lower():
-                continue
-            if file_type and fp.suffix != file_type:
-                continue
-            results.append(str(fp))
-            if len(results) >= 20:
-                break
-        return {"success": True, "files": results}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def web_search(query: str) -> dict:
-    try:
-        import requests
-
-        r = requests.get(
-            "http://127.0.0.1:8080/search", params={"q": query, "format": "json"}, timeout=8
-        )
-        data = r.json()
-        results = [
-            {"title": x.get("title"), "url": x.get("url"), "snippet": x.get("content", "")[:200]}
-            for x in data.get("results", [])[:5]
-        ]
-        return {"success": True, "results": results}
-    except Exception as e:
-        return {"error": f"搜索失败（需要本地 SearXNG）: {e}"}
-
-
-# ─────────────────────────────────────────────────────────────
-# 扩展工具（来自 claude_terminal / tool_schemas）
-# ─────────────────────────────────────────────────────────────
-
-
-def append_file_content(file_path: str, content: str) -> dict:
-    """向文件末尾追加内容"""
-    try:
-        p = Path(file_path).expanduser().resolve()
-        mode = "a" if p.exists() else "w"
-        prefix = ""
-        if mode == "a" and p.stat().st_size > 0:
-            with open(p, "rb") as f:
-                f.seek(-1, 2)
-                if f.read(1) != b"\n":
-                    prefix = "\n"
-        with open(p, mode, encoding="utf-8") as f:
-            f.write(prefix + content)
-        return {"success": True, "path": str(p), "message": "内容已追加"}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def grep_search(
-    pattern: str, path: str = ".", include_extension: str = None, recursive: bool = True
-) -> dict:
-    """使用正则搜索文件内容（递归）"""
-    try:
-        search_path = Path(path).expanduser().resolve()
-        results = []
-        count = 0
-        max_results = 20
-        glob_pattern = "**/*" if recursive else "*"
-        for fp in search_path.glob(glob_pattern):
-            if not fp.is_file():
-                continue
-            if include_extension and fp.suffix != include_extension:
-                continue
-            if fp.stat().st_size > 1024 * 1024:
-                continue
-            try:
-                with open(fp, "r", encoding="utf-8", errors="ignore") as f:
-                    file_content = f.read()
-                matches = list(re.finditer(pattern, file_content, re.MULTILINE))
-                if matches:
-                    file_matches = []
-                    for m in matches[:5]:
-                        line_num = file_content.count("\n", 0, m.start()) + 1
-                        line_start = file_content.rfind("\n", 0, m.start()) + 1
-                        line_end = file_content.find("\n", m.end())
-                        if line_end == -1:
-                            line_end = len(file_content)
-                        line_content = file_content[line_start:line_end].strip()
-                        file_matches.append(f"Line {line_num}: {line_content[:100]}")
-                    results.append(
-                        f"File: {fp.relative_to(search_path)}\n" + "\n".join(file_matches)
-                    )
-                    count += 1
-                    if count >= max_results:
-                        break
-            except Exception:
-                continue
-        return {
-            "success": True,
-            "matches_found": count,
-            "results": "\n\n".join(results) if results else "No matches found",
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def execute_batch_commands(commands: list, stop_on_error: bool = True) -> dict:
-    """批量顺序执行多条 Shell 命令，默认遇错停止"""
-    results = []
-    overall_success = True
-    for cmd in commands:
-        res = execute_command(cmd)
-        results.append({"command": cmd, "result": res})
-        if not res.get("success", False):
-            overall_success = False
-            if stop_on_error:
-                break
-    return {"success": overall_success, "executed_count": len(results), "results": results}
-
-
-def fetch_url(url: str) -> dict:
-    """抓取 URL 页面并返回纯文本内容"""
-    try:
-        import requests
-
-        try:
-            from bs4 import BeautifulSoup
-        except ImportError:
-            return {"error": "beautifulsoup4 未安装: pip install beautifulsoup4"}
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; STM32Agent/1.0)"}
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, "html.parser")
-        for tag in soup(["script", "style"]):
-            tag.decompose()
-        text = soup.get_text()
-        lines = (line.strip() for line in text.splitlines())
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        text = "\n".join(chunk for chunk in chunks if chunk)
-        return {"success": True, "url": url, "content": text[:5000], "truncated": len(text) > 5000}
-    except Exception as e:
-        return {"error": f"获取失败: {e}"}
-
-
-def get_current_time() -> dict:
-    """获取当前系统时间、星期和时区"""
-    try:
-        now = datetime.now()
-        return {
-            "success": True,
-            "current_time": now.strftime("%Y-%m-%d %H:%M:%S"),
-            "weekday": now.strftime("%A"),
-            "timezone": str(now.astimezone().tzinfo),
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def ask_human(question: str) -> dict:
-    """向用户提问并等待输入"""
-    try:
-        CONSOLE.print(f"\n[cyan][❓ AI Question]: {question}[/]")
-        answer = input(" > ")
-        return {"success": True, "answer": answer}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def git_status() -> dict:
-    """执行 git status 查看修改状态"""
-    return execute_command("git status")
-
-
-def git_diff() -> dict:
-    """执行 git diff 查看代码变更"""
-    return execute_command("git diff")
-
-
-def git_commit(message: str) -> dict:
-    """执行 git commit -m <message>"""
-    return execute_command(f"git commit -m {shlex.quote(message)}")
-
-
-def edit_file_lines(
-    file_path: str, operation: str, start_line: int, end_line: int = None, new_content: str = None
-) -> dict:
-    """基于行号编辑文件（replace/insert/delete）"""
-    try:
-        p = Path(file_path).expanduser().resolve()
-        if not p.exists():
-            return {"error": f"文件不存在: {file_path}"}
-        with open(p, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()
-        total = len(lines)
-        if start_line < 1 or start_line > total:
-            return {"error": f"start_line {start_line} 超出范围 [1, {total}]"}
-        if end_line is None:
-            end_line = start_line
-        if end_line < start_line or end_line > total:
-            return {"error": f"end_line {end_line} 无效"}
-        si, ei = start_line - 1, end_line
-        if operation == "replace":
-            if new_content is None:
-                return {"error": "replace 需要 new_content"}
-            if not new_content.endswith("\n"):
-                new_content += "\n"
-            new_lines = lines[:si] + new_content.splitlines(keepends=True) + lines[ei:]
-        elif operation == "insert":
-            if new_content is None:
-                return {"error": "insert 需要 new_content"}
-            if not new_content.endswith("\n"):
-                new_content += "\n"
-            new_lines = lines[:si] + new_content.splitlines(keepends=True) + lines[si:]
-        elif operation == "delete":
-            new_lines = lines[:si] + lines[ei:]
-        else:
-            return {"error": f"未知操作: {operation}"}
-        with open(p, "w", encoding="utf-8") as f:
-            f.writelines(new_lines)
-        return {
-            "success": True,
-            "path": str(p),
-            "operation": operation,
-            "new_total_lines": len(new_lines),
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def insert_content_by_regex(file_path: str, regex_pattern: str, content: str) -> dict:
-    """在文件第一个正则匹配位置之后插入内容"""
-    try:
-        p = Path(file_path).expanduser().resolve()
-        if not p.exists():
-            return {"error": f"文件不存在: {file_path}"}
-        with open(p, "r", encoding="utf-8", errors="ignore") as f:
-            file_content = f.read()
-        m = re.search(regex_pattern, file_content, re.MULTILINE)
-        if not m:
-            return {"error": f"正则 '{regex_pattern}' 未匹配到内容"}
-        new_content = file_content[: m.end()] + content + file_content[m.end() :]
-        with open(p, "w", encoding="utf-8") as f:
-            f.write(new_content)
-        return {
-            "success": True,
-            "path": str(p),
-            "match_found": m.group(0)[:50],
-            "message": "内容已插入",
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def check_python_code(file_path: str) -> dict:
-    """检查 Python 文件语法和风格（flake8 / ast）"""
-    import ast
-
-    try:
-        p = Path(file_path).expanduser().resolve()
-        if not p.exists():
-            return {"error": f"文件不存在: {file_path}"}
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                ast.parse(f.read())
-        except SyntaxError as e:
-            return {
-                "success": False,
-                "error_type": "SyntaxError",
-                "line": e.lineno,
-                "message": str(e),
-            }
-        lint_result = ""
-        try:
-            result = subprocess.run(
-                f"flake8 {shlex.quote(str(p))}",
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode != 0 and result.stdout:
-                lint_result = f"Flake8:\n{result.stdout}"
-        except Exception:
-            pass
-        return {
-            "success": True,
-            "message": "语法检查通过",
-            "linter_output": lint_result or "无问题",
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def run_python_code(code: str) -> dict:
-    """执行 Python 代码片段（临时文件沙箱）"""
-    import tempfile
-
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False, encoding="utf-8"
-        ) as tmp:
-            tmp.write(code)
-            tmp_path = tmp.name
-        result = subprocess.run(
-            [sys.executable, tmp_path], capture_output=True, text=True, timeout=30
-        )
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
-        return {
-            "success": result.returncode == 0,
-            "stdout": result.stdout[:3000],
-            "stderr": result.stderr[:1000],
-            "returncode": result.returncode,
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# ── Word 文档工具 ──────────────────────────────────────────────
-
-
-def _get_docx_module():
-    """懒加载 python-docx，未安装时返回 None"""
-    try:
-        import docx
-
-        return docx
-    except ImportError:
-        return None
-
-
-def read_docx(file_path: str) -> dict:
-    """读取 Word 文档(.docx)的文本内容"""
-    docx_mod = _get_docx_module()
-    if docx_mod is None:
-        return {"error": "python-docx 未安装: pip install python-docx"}
-    try:
-        doc = docx_mod.Document(file_path)
-        text = "\n".join(p.text for p in doc.paragraphs)
-        return {"success": True, "content": text, "total_paragraphs": len(doc.paragraphs)}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def replace_docx_text(
-    file_path: str, old_text: str, new_text: str, use_regex: bool = False
-) -> dict:
-    """替换 Word 文档中的文本（支持正则）"""
-    docx_mod = _get_docx_module()
-    if docx_mod is None:
-        return {"error": "python-docx 未安装: pip install python-docx"}
-    try:
-        doc = docx_mod.Document(file_path)
-        count = 0
-        for para in doc.paragraphs:
-            if use_regex:
-                if re.search(old_text, para.text):
-                    replaced = re.sub(old_text, new_text, para.text)
-                    for run in para.runs:
-                        run.text = ""
-                    if para.runs:
-                        para.runs[0].text = replaced
-                    else:
-                        para.add_run(replaced)
-                    count += 1
-            else:
-                if old_text in para.text:
-                    replaced_in_run = False
-                    for run in para.runs:
-                        if old_text in run.text:
-                            run.text = run.text.replace(old_text, new_text)
-                            count += 1
-                            replaced_in_run = True
-                    if not replaced_in_run:
-                        para.text = para.text.replace(old_text, new_text)
-                        count += 1
-        doc.save(file_path)
-        return {"success": True, "replaced_count": count, "message": f"已替换 {count} 处"}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def append_docx_content(
-    file_path: str, content: str, after_paragraph_index: int = None, style: str = None
-) -> dict:
-    """向 Word 文档追加内容（支持指定位置插入）"""
-    docx_mod = _get_docx_module()
-    if docx_mod is None:
-        return {"error": "python-docx 未安装: pip install python-docx"}
-    try:
-        doc = docx_mod.Document(file_path)
-        paragraphs_text = [t for t in content.split("\n") if t.strip()]
-        if after_paragraph_index is None:
-            for p_text in paragraphs_text:
-                p = doc.add_paragraph(p_text)
-                if style:
-                    try:
-                        p.style = style
-                    except Exception:
-                        pass
-        else:
-            n = len(doc.paragraphs)
-            if after_paragraph_index < 0 or after_paragraph_index >= n:
-                return {"error": f"索引 {after_paragraph_index} 超出范围 (0-{n-1})"}
-            if after_paragraph_index == n - 1:
-                for p_text in paragraphs_text:
-                    p = doc.add_paragraph(p_text)
-                    if style:
-                        try:
-                            p.style = style
-                        except Exception:
-                            pass
-            else:
-                next_para = doc.paragraphs[after_paragraph_index + 1]
-                base_style = doc.paragraphs[after_paragraph_index].style
-                for p_text in paragraphs_text:
-                    new_p = next_para.insert_paragraph_before(p_text)
-                    if style:
-                        try:
-                            new_p.style = style
-                        except Exception:
-                            pass
-                    else:
-                        new_p.style = base_style
-        doc.save(file_path)
-        return {"success": True, "message": "内容已追加"}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def inspect_docx_structure(file_path: str, max_paragraphs: int = 50) -> dict:
-    """查看 Word 文档段落结构（用于定位插入点）"""
-    docx_mod = _get_docx_module()
-    if docx_mod is None:
-        return {"error": "python-docx 未安装: pip install python-docx"}
-    try:
-        doc = docx_mod.Document(file_path)
-        structure = []
-        for i, para in enumerate(doc.paragraphs[:max_paragraphs]):
-            preview = para.text[:50] + "..." if len(para.text) > 50 else para.text
-            if not preview.strip():
-                preview = "[空段落]"
-            structure.append(f"[{i}] {preview}")
-        return {
-            "success": True,
-            "total_paragraphs": len(doc.paragraphs),
-            "structure": "\n".join(structure),
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def insert_docx_content_after_heading(
-    file_path: str, heading_text: str, content: str, style: str = None
-) -> dict:
-    """在 Word 文档指定标题后插入内容（大小写不敏感）"""
-    docx_mod = _get_docx_module()
-    if docx_mod is None:
-        return {"error": "python-docx 未安装: pip install python-docx"}
-    try:
-        doc = docx_mod.Document(file_path)
-        target_para = None
-        for para in doc.paragraphs:
-            if heading_text.lower() in para.text.lower():
-                target_para = para
-                break
-        if not target_para:
-            return {"error": f"未找到标题: {heading_text}"}
-        index = doc.paragraphs.index(target_para)
-        return append_docx_content(file_path, content, index, style)
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# ── 电脑控制工具 ──────────────────────────────────────────────
-
-
-def computer_screenshot() -> dict:
-    """截取当前桌面截图并保存为 PNG"""
-    try:
-        import pyautogui
-
-        ts = int(time.time())
-        path = os.path.abspath(f"screenshot_{ts}.png")
-        pyautogui.screenshot(path)
-        return {"success": True, "image_path": path, "message": f"截图已保存: {path}"}
-    except ImportError:
-        return {"error": "pyautogui 未安装: pip install pyautogui"}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def computer_mouse_move(x: int, y: int) -> dict:
-    """移动鼠标到指定坐标"""
-    try:
-        import pyautogui
-
-        pyautogui.moveTo(x, y)
-        return {"success": True, "action": "move", "x": x, "y": y}
-    except ImportError:
-        return {"error": "pyautogui 未安装: pip install pyautogui"}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def computer_mouse_click(button: str = "left") -> dict:
-    """鼠标点击（left/right/double）"""
-    try:
-        import pyautogui
-
-        if button == "double":
-            pyautogui.doubleClick()
-        else:
-            pyautogui.click(button=button)
-        return {"success": True, "button": button}
-    except ImportError:
-        return {"error": "pyautogui 未安装: pip install pyautogui"}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def computer_keyboard_type(text: str) -> dict:
-    """向焦点窗口输入文本"""
-    try:
-        import pyautogui
-
-        pyautogui.write(text)
-        return {"success": True, "typed": text}
-    except ImportError:
-        return {"error": "pyautogui 未安装: pip install pyautogui"}
-    except Exception as e:
-        return {"error": str(e)}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -2613,7 +2152,22 @@ bind_tool_implementations(
         "stm32_save_code": stm32_save_code,
         "stm32_list_projects": stm32_list_projects,
         "stm32_read_project": stm32_read_project,
+        # RP2040 / MicroPython
+        "rp2040_connect": rp2040_connect,
+        "rp2040_hardware_status": rp2040_hardware_status,
+        "rp2040_compile": rp2040_compile,
+        "rp2040_flash": rp2040_flash,
+        "rp2040_auto_sync_cycle": rp2040_auto_sync_cycle,
+        "rp2040_list_files": rp2040_list_files,
+        # ESP / MicroPython
+        "esp_connect": esp_connect,
+        "esp_hardware_status": esp_hardware_status,
+        "esp_compile": esp_compile,
+        "esp_flash": esp_flash,
+        "esp_auto_sync_cycle": esp_auto_sync_cycle,
+        "esp_list_files": esp_list_files,
         "gary_save_member_memory": gary_save_member_memory,
+        "gary_delete_member_memory": gary_delete_member_memory,
         # 通用
         "read_file": read_file,
         "create_or_overwrite_file": create_or_overwrite_file,
@@ -2642,11 +2196,6 @@ bind_tool_implementations(
         "append_docx_content": append_docx_content,
         "inspect_docx_structure": inspect_docx_structure,
         "insert_docx_content_after_heading": insert_docx_content_after_heading,
-        # 电脑控制工具
-        "computer_screenshot": computer_screenshot,
-        "computer_mouse_move": computer_mouse_move,
-        "computer_mouse_click": computer_mouse_click,
-        "computer_keyboard_type": computer_keyboard_type,
     }
 )
 
@@ -2658,99 +2207,11 @@ bind_tool_implementations(
 # ─────────────────────────────────────────────────────────────
 def configure_ai_cli(agent: "STM32Agent | None" = None):
     """交互式配置 AI 接口（可在 CLI 内调用，也可独立运行）"""
-    import getpass as _gp
 
-    CONSOLE.print()
-    CONSOLE.rule("[bold cyan]  配置 AI 后端接口[/]")
-    CONSOLE.print()
-
-    cur_key, cur_url, cur_model = _read_ai_config()
-    is_configured = bool(cur_key and not _api_key_is_placeholder(cur_key))
-
-    if is_configured:
-        CONSOLE.print(f"  [dim]当前 API Key :[/] {_mask_key(cur_key)}")
-        CONSOLE.print(f"  [dim]当前 Base URL:[/] {cur_url}")
-        CONSOLE.print(f"  [dim]当前 Model   :[/] {cur_model}")
-        CONSOLE.print()
-
-    # 服务商菜单
-    CONSOLE.print("[bold cyan]  请选择 AI 服务提供商：[/]")
-    for i, (name, url, _) in enumerate(_AI_PRESETS, 1):
-        url_hint = f"  [dim]{url[:55]}[/]" if url else ""
-        CONSOLE.print(f"    [yellow]{i}[/].  {name:<24}{url_hint}")
-    CONSOLE.print()
-
-    valid = [str(i) for i in range(1, len(_AI_PRESETS) + 1)]
-    choice = ""
-    while choice not in valid:
-        try:
-            choice = input(f"  输入序号 [1-{len(_AI_PRESETS)}] (回车取消): ").strip()
-        except (EOFError, KeyboardInterrupt):
-            CONSOLE.print("\n[dim]已取消[/]")
-            return
-        if choice == "":
-            CONSOLE.print("[dim]已取消[/]")
-            return
-
-    idx = int(choice) - 1
-    preset_name, preset_url, preset_model = _AI_PRESETS[idx]
-
-    # Base URL
-    if preset_url:
-        base_url = preset_url
-        CONSOLE.print(f"  [dim]Base URL: {base_url}[/]")
-    else:
-        try:
-            base_url = input("  Base URL: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            base_url = cur_url
-
-    # Model
-    default_model = preset_model or cur_model or ""
-    try:
-        hint = f" (默认 {default_model})" if default_model else ""
-        entered = input(f"  Model 名称{hint}: ").strip()
-        model = entered if entered else default_model
-    except (EOFError, KeyboardInterrupt):
-        model = default_model
-
-    # API Key
-    CONSOLE.print()
-    if preset_name == "Ollama (本地)":
-        api_key = "ollama"
-        CONSOLE.print("  [dim]Ollama 本地模式，API Key 自动设为 ollama[/]")
-    else:
-        CONSOLE.print(f"  [dim]请输入 {preset_name} API Key（不显示输入内容）[/]")
-        try:
-            api_key = _gp.getpass("  API Key: ")
-        except Exception:
-            try:
-                api_key = input("  API Key: ").strip()
-            except (EOFError, KeyboardInterrupt):
-                api_key = ""
-        if not api_key:
-            if is_configured:
-                CONSOLE.print("  [dim]未输入，保留原有 Key[/]")
-                api_key = cur_key
-            else:
-                CONSOLE.print("[yellow]  未输入 API Key，配置取消[/]")
-                return
-
-    # 写入 config.py
-    if _write_ai_config(api_key, base_url, model):
-        _sync_ai_runtime_settings(reload_ai_config())
-        CONSOLE.print()
-        CONSOLE.print("[green]  ✓ 配置已保存到 config.py[/]")
-        CONSOLE.print(f"  [green]✓[/] 服务商  {preset_name}")
-        CONSOLE.print(f"  [green]✓[/] API Key {_mask_key(api_key)}")
-        CONSOLE.print(f"  [green]✓[/] Model   {model}")
-        # 重建当前会话的 AI 客户端
-        if agent is not None:
-            agent.client = get_ai_client(timeout=180.0, force_reload=True)
-            CONSOLE.print("  [green]✓[/] AI 客户端已热重载，无需重启")
-    else:
-        CONSOLE.print("[red]  ✗ 写入 config.py 失败[/]")
-    CONSOLE.print()
+    return _configure_ai_cli_impl(
+        sync_ai_runtime_settings=_sync_ai_runtime_settings,
+        agent=agent,
+    )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -2776,7 +2237,7 @@ class STM32Agent:
 
         ctx = get_context()
         prompt = build_system_prompt(ctx.chip, ctx.cli_language, ctx.hw_connected)
-        member_prompt = get_member_prompt_section()
+        member_prompt = get_member_prompt_section(ctx.chip)
         if member_prompt:
             prompt += "\n\n" + member_prompt
         for error_type in ("compile_error", "hardfault", "i2c_failure"):
@@ -2870,6 +2331,85 @@ class STM32Agent:
                 result.append(clean)
         return result
 
+    @staticmethod
+    def _partial_think_tag_suffix(text: str, tags: tuple[str, ...]) -> str:
+        """Return the longest suffix that could be the prefix of a think tag."""
+
+        if not text:
+            return ""
+        max_len = min(len(text), max(len(tag) for tag in tags) - 1)
+        for size in range(max_len, 0, -1):
+            suffix = text[-size:]
+            if any(tag.startswith(suffix) for tag in tags):
+                return suffix
+        return ""
+
+    def _extract_think_segments(
+        self,
+        text: str,
+        state: dict[str, Any],
+    ) -> list[tuple[str, str]]:
+        """Split streamed text into visible content and hidden think segments."""
+
+        open_tag = "<think>"
+        close_tag = "</think>"
+        source = f"{state.get('pending', '')}{text or ''}"
+        state["pending"] = ""
+        segments: list[tuple[str, str]] = []
+
+        while source:
+            if state.get("inside_think", False):
+                close_idx = source.find(close_tag)
+                if close_idx >= 0:
+                    if close_idx:
+                        segments.append(("think", source[:close_idx]))
+                    source = source[close_idx + len(close_tag) :]
+                    state["inside_think"] = False
+                    continue
+
+                pending = self._partial_think_tag_suffix(source, (close_tag,))
+                chunk = source[:-len(pending)] if pending else source
+                if chunk:
+                    segments.append(("think", chunk))
+                state["pending"] = pending
+                break
+
+            open_idx = source.find(open_tag)
+            close_idx = source.find(close_tag)
+
+            if close_idx >= 0 and (open_idx < 0 or close_idx < open_idx):
+                if close_idx:
+                    segments.append(("content", source[:close_idx]))
+                source = source[close_idx + len(close_tag) :]
+                continue
+
+            if open_idx >= 0:
+                if open_idx:
+                    segments.append(("content", source[:open_idx]))
+                source = source[open_idx + len(open_tag) :]
+                state["inside_think"] = True
+                continue
+
+            pending = self._partial_think_tag_suffix(source, (open_tag, close_tag))
+            chunk = source[:-len(pending)] if pending else source
+            if chunk:
+                segments.append(("content", chunk))
+            state["pending"] = pending
+            break
+
+        return segments
+
+    @staticmethod
+    def _flush_think_segments(state: dict[str, Any]) -> list[tuple[str, str]]:
+        """Flush buffered partial tag text at the end of a stream."""
+
+        pending = str(state.get("pending", "") or "")
+        state["pending"] = ""
+        if not pending:
+            return []
+        kind = "think" if state.get("inside_think", False) else "content"
+        return [(kind, pending)]
+
     def _request_final_reply_after_tools(self, stream_to_console: bool = True) -> str:
         """部分模型在工具执行后会停在空回复，这里补一次只求最终答复的请求。"""
         if stream_to_console:
@@ -2904,6 +2444,7 @@ class STM32Agent:
         content = ""
         thinking = ""
         in_think = False
+        think_tag_state = {"inside_think": False, "pending": ""}
         try:
             for chunk in stream:
                 if not chunk.choices:
@@ -2920,12 +2461,42 @@ class STM32Agent:
                         CONSOLE.print(rc, end="", style="dim")
 
                 if delta.content:
+                    for kind, piece in self._extract_think_segments(delta.content, think_tag_state):
+                        if not piece:
+                            continue
+                        if kind == "think":
+                            if not in_think and stream_to_console:
+                                CONSOLE.print(f"\n[dim {THEME}]💭 思考:[/]")
+                            in_think = True
+                            thinking += piece
+                            if stream_to_console:
+                                CONSOLE.print(piece, end="", style="dim")
+                            continue
+
+                        if in_think and stream_to_console:
+                            CONSOLE.print()
+                        in_think = False
+                        content += piece
+                        if stream_to_console:
+                            CONSOLE.print(piece, end="", style="white")
+
+            for kind, piece in self._flush_think_segments(think_tag_state):
+                if not piece:
+                    continue
+                if kind == "think":
+                    if not in_think and stream_to_console:
+                        CONSOLE.print(f"\n[dim {THEME}]💭 思考:[/]")
+                    in_think = True
+                    thinking += piece
+                    if stream_to_console:
+                        CONSOLE.print(piece, end="", style="dim")
+                else:
                     if in_think and stream_to_console:
                         CONSOLE.print()
                     in_think = False
-                    content += delta.content
+                    content += piece
                     if stream_to_console:
-                        CONSOLE.print(delta.content, end="", style="white")
+                        CONSOLE.print(piece, end="", style="white")
 
             if in_think and stream_to_console:
                 CONSOLE.print()
@@ -3017,6 +2588,7 @@ class STM32Agent:
             tool_calls_raw: Dict[int, dict] = {}
             thinking = ""
             in_think = False
+            think_tag_state = {"inside_think": False, "pending": ""}
 
             try:
                 for chunk in stream:
@@ -3036,17 +2608,29 @@ class STM32Agent:
 
                     # 文本内容
                     if delta.content:
-                        if in_think and stream_to_console:
-                            CONSOLE.print()
-                        in_think = False
-                        content += delta.content
-                        if stream_to_console:
-                            CONSOLE.print(delta.content, end="", style="white")
-                        if text_callback:
-                            preview_text = "\n\n".join(
-                                part for part in [*reply_parts, content.strip()] if part
-                            ).strip()
-                            text_callback(preview_text)
+                        for kind, piece in self._extract_think_segments(delta.content, think_tag_state):
+                            if not piece:
+                                continue
+                            if kind == "think":
+                                if not in_think and stream_to_console:
+                                    CONSOLE.print(f"\n[dim {THEME}]💭 思考:[/]")
+                                in_think = True
+                                thinking += piece
+                                if stream_to_console:
+                                    CONSOLE.print(piece, end="", style="dim")
+                                continue
+
+                            if in_think and stream_to_console:
+                                CONSOLE.print()
+                            in_think = False
+                            content += piece
+                            if stream_to_console:
+                                CONSOLE.print(piece, end="", style="white")
+                            if text_callback:
+                                preview_text = "\n\n".join(
+                                    part for part in [*reply_parts, content.strip()] if part
+                                ).strip()
+                                text_callback(preview_text)
 
                     # 工具调用
                     if delta.tool_calls:
@@ -3091,6 +2675,29 @@ class STM32Agent:
                             )
                             if sig:
                                 tool_calls_raw[idx]["thought_signature"] += sig
+
+                for kind, piece in self._flush_think_segments(think_tag_state):
+                    if not piece:
+                        continue
+                    if kind == "think":
+                        if not in_think and stream_to_console:
+                            CONSOLE.print(f"\n[dim {THEME}]💭 思考:[/]")
+                        in_think = True
+                        thinking += piece
+                        if stream_to_console:
+                            CONSOLE.print(piece, end="", style="dim")
+                    else:
+                        if in_think and stream_to_console:
+                            CONSOLE.print()
+                        in_think = False
+                        content += piece
+                        if stream_to_console:
+                            CONSOLE.print(piece, end="", style="white")
+                        if text_callback:
+                            preview_text = "\n\n".join(
+                                part for part in [*reply_parts, content.strip()] if part
+                            ).strip()
+                            text_callback(preview_text)
 
                 if in_think and stream_to_console:
                     CONSOLE.print()
@@ -3314,7 +2921,43 @@ def _print_startup_checks() -> None:
     """Render startup dependency checks before entering interactive mode."""
 
     ctx = get_context()
+    ctx.chip = _current_target(ctx.chip)
     CONSOLE.print(f"[dim]{_cli_text('检查环境...', 'Checking environment...')}[/]")
+
+    if is_micropython_target(ctx.chip):
+        CONSOLE.print(
+            f"[green]  {_cli_text('运行时', 'Runtime')}: {ctx.chip} / {target_runtime_label(ctx.chip)}[/]"
+        )
+        try:
+            import serial as _serial  # type: ignore
+
+            version = getattr(_serial, "__version__", "installed")
+            CONSOLE.print(f"[green]  pyserial: {version}[/]")
+        except ImportError:
+            CONSOLE.print(
+                f"[yellow]  pyserial: {_cli_text('未安装（pip install pyserial）', 'not installed (pip install pyserial)')}[/]"
+            )
+
+        serial_candidates = detect_serial_ports(verbose=False)
+        if serial_candidates:
+            CONSOLE.print(
+                f"[green]  {_cli_text('串口', 'Serial')}: {_cli_text(f'检测到 {serial_candidates}（连接时自动选择）', f'detected {serial_candidates} (auto-selected on connect)')}[/]"
+            )
+        else:
+            CONSOLE.print(
+                f"[yellow]  {_cli_text('串口', 'Serial')}: {_cli_text(f'未检测到 {ctx.chip} 串口，请确认开发板已刷入 MicroPython 且 USB 数据线可传输', f'no {ctx.chip} serial port detected; ensure the board runs MicroPython and the USB cable supports data')}[/]"
+            )
+
+        try:
+            import pyocd as _pyocd  # type: ignore
+
+            CONSOLE.print(f"[dim]  pyocd: {_pyocd.__version__} ({_cli_text('可选，调试时备用', 'optional fallback for low-level debug')})[/]")
+        except ImportError:
+            CONSOLE.print(
+                f"[dim]  pyocd: {_cli_text('未安装（MicroPython 目标不强依赖）', 'not installed (not required for MicroPython targets)')}[/]"
+            )
+        CONSOLE.print()
+        return
 
     compiler = _get_compiler()
     info = compiler.check(ctx.chip)
@@ -3422,7 +3065,9 @@ def run(args: argparse.Namespace) -> None:
 
     chip_arg = str(getattr(args, "chip", "") or "").strip()
     if chip_arg:
-        ctx.chip = chip_arg.upper()
+        ctx.chip = canonical_target_name(chip_arg)
+    else:
+        ctx.chip = _current_target(ctx.chip)
 
     _print_startup_checks()
 
