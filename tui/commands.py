@@ -8,6 +8,7 @@ from typing import Any, Callable, Mapping, Optional
 
 import compiler as _compiler_module
 from core.memory import _ensure_member_file, _member_preview_markdown
+from core.platforms import ESP_TARGET_CHOICES, RP2040_TARGET_CHOICES, detect_target_platform
 from core.state import get_context
 from gary_skills import _get_manager, handle_skill_command
 from hardware.serial_mon import detect_serial_ports
@@ -107,6 +108,8 @@ class GaryCompleter(Completer):
     def _chip_candidates(self) -> list[str]:
         ctx = get_context()
         chips = set(_compiler_module.CHIP_DB.keys())
+        chips.update(RP2040_TARGET_CHOICES)
+        chips.update(ESP_TARGET_CHOICES)
         for value in (self._default_chip, ctx.chip):
             if value:
                 chips.add(str(value).upper())
@@ -231,8 +234,8 @@ def _show_help(theme: str, cli_text: Callable[[str, str], str]) -> None:
         (
             "/connect [chip]",
             cli_text(
-                "连接探针（如 /connect STM32F103C8T6）",
-                "Connect the probe (for example: /connect STM32F103C8T6)",
+                "连接目标板（如 /connect STM32F103C8T6、/connect PICO_W 或 /connect ESP32）",
+                "Connect the target board (for example: /connect STM32F103C8T6, /connect PICO_W, or /connect ESP32)",
             ),
         ),
         (
@@ -245,12 +248,12 @@ def _show_help(theme: str, cli_text: Callable[[str, str], str]) -> None:
         (
             "/flash [bin]",
             cli_text(
-                "烧录最近一次或指定的二进制文件",
-                "Flash the latest or a specified binary image",
+                "烧录/同步最近一次产物（STM32 为 bin，MicroPython 目标为 main.py）",
+                "Deploy the latest artifact (STM32 bin or main.py for MicroPython targets)",
             ),
         ),
         ("/disconnect", cli_text("断开探针和串口", "Disconnect probe and serial")),
-        ("/chip [model]", cli_text("查看/切换芯片型号", "Show or change the chip model")),
+        ("/chip [model]", cli_text("查看/切换目标板型号", "Show or change the target model")),
         (
             "/language [en|zh]",
             cli_text(
@@ -341,9 +344,17 @@ def handle_slash_command(
                 f"Connected: {r.get('chip', ctx.chip)}  Serial: {serial_state}",
             )
         else:
-            msg = cli_text(
-                "连接失败，请检查探针 USB 连接和驱动",
-                "Connection failed. Check the probe USB connection and driver.",
+            is_micropython = detect_target_platform(chip or get_context().chip) in {"rp2040", "esp"}
+            msg = (
+                cli_text(
+                    "连接失败，请检查 USB 串口、数据线和 MicroPython 固件",
+                    "Connection failed. Check the USB serial port, data cable, and MicroPython firmware.",
+                )
+                if is_micropython
+                else cli_text(
+                    "连接失败，请检查探针 USB 连接和驱动",
+                    "Connection failed. Check the probe USB connection and driver.",
+                )
             )
         console.print(f"[{'green' if r['success'] else 'red'}]{msg}[/]\n")
         return True
@@ -415,11 +426,12 @@ def handle_slash_command(
     if head == "/chip":
         if not arg:
             ctx = get_context()
-            console.print(f"[{theme}]{cli_text('当前芯片', 'Current chip')}: {ctx.chip}[/]\n")
+            console.print(f"[{theme}]{cli_text('当前目标', 'Current target')}: {ctx.chip}[/]\n")
         else:
             result = actions["set_chip"](arg)
+            family = result.get("family") or result.get("platform") or "generic"
             console.print(
-                f"[{theme}]{cli_text('已切换', 'Switched to')}: {result['chip']} ({result['family']})[/]\n"
+                f"[{theme}]{cli_text('已切换', 'Switched to')}: {result['chip']} ({family})[/]\n"
             )
         return True
 
@@ -462,7 +474,7 @@ def handle_slash_command(
                 console.print(f"  [{theme}]{probe['description']}[/] ({probe['uid']})")
         else:
             console.print(
-                f"[yellow]{cli_text('未检测到任何探针，请检查 USB 连接', 'No probes detected. Check the USB connection.')}[/]"
+                f"[yellow]{probes.get('message') or cli_text('未检测到任何探针，请检查 USB 连接', 'No probes detected. Check the USB connection.')}[/]"
             )
         console.print()
         return True
