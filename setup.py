@@ -1335,15 +1335,43 @@ if "%1"=="do" (
 """
 
 
-def _get_win_install_dir() -> Path:
-    """返回 Windows 下 gary.bat 的安装目录（优先用户 Scripts，其次 AppData\\Local\\Programs\\Gary）"""
-    # 优先放到 Python Scripts 目录（通常已在 PATH）
-    scripts = Path(sys.executable).parent / "Scripts"
+def _default_win_install_dir() -> Path:
+    """返回 Windows 下 gary.bat 的默认安装目录。"""
+
+    exe_dir = Path(sys.executable).resolve().parent
+    if exe_dir.name.lower() == "scripts":
+        return exe_dir
+
+    scripts = exe_dir / "Scripts"
     if scripts.exists():
         return scripts
-    # 备用：用户级应用目录
+
+    parent_scripts = exe_dir.parent / "Scripts"
+    if parent_scripts.exists():
+        return parent_scripts
+
     appdata = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
     return appdata / "Programs" / "Gary"
+
+
+def _get_win_install_dir() -> Path:
+    """兼容旧调用名，返回 Windows 下 gary.bat 的安装目录。"""
+
+    return _default_win_install_dir()
+
+
+def _resolve_win_install_dir() -> Path:
+    """解析 Windows 安装目录，并兼容旧版脚本缺少 helper 的情况。"""
+
+    resolver = globals().get("_get_win_install_dir")
+    if callable(resolver):
+        try:
+            install_dir = resolver()
+            if install_dir:
+                return Path(install_dir)
+        except Exception:
+            pass
+    return _default_win_install_dir()
 
 
 def _check_win_path(install_dir: Path):
@@ -1392,7 +1420,7 @@ def _install_gary_unix(auto: bool):
 
 
 def _install_gary_win(auto: bool):
-    install_dir = _get_win_install_dir()
+    install_dir = _resolve_win_install_dir()
     gary_bat = install_dir / "gary.bat"
     expected_content = _GARY_BAT.format(agent_script=str(AGENT_SCRIPT), python=sys.executable)
 
