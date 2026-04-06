@@ -83,10 +83,7 @@ def str_replace_edit(file_path: str, old_str: str, new_str: str) -> dict:
 def list_directory(path: str = ".") -> dict:
     try:
         target = Path(path).expanduser().resolve()
-        items = [
-            {"name": item.name, "type": "dir" if item.is_dir() else "file"}
-            for item in target.iterdir()
-        ]
+        items = [{"name": item.name, "type": "dir" if item.is_dir() else "file"} for item in target.iterdir()]
         return {
             "success": True,
             "path": str(target),
@@ -159,6 +156,11 @@ def _clean_browser_text(raw_text: str) -> str:
     return "\n".join(chunk for chunk in chunks if chunk)
 
 
+def _clean_browser_snippet(raw_text: str, max_chars: int = 200) -> str:
+    text = " ".join(_clean_browser_text(raw_text).split())
+    return text[:max_chars]
+
+
 def _extract_browser_links(soup, base_url: str, limit: int = 40) -> list[dict]:
     links = []
     seen: set[tuple[str, str]] = set()
@@ -217,6 +219,62 @@ def _parse_browser_page(url: str) -> tuple[dict | None, dict | None]:
         return None, {"error": f"获取失败: {exc}"}
 
 
+def _search_via_searx_html(base_url: str, query: str, limit: int) -> dict:
+    BeautifulSoup, error = _load_bs4()
+    if error is not None:
+        return error
+    try:
+        response = requests.get(
+            f"{base_url}/search",
+            params={"q": query},
+            headers=_browser_headers(),
+            timeout=12,
+        )
+        response.raise_for_status()
+        soup = BeautifulSoup(response.content, "html.parser")
+        results = []
+        for article in soup.select("article.result"):
+            anchor = article.select_one("a[href]")
+            if anchor is None:
+                continue
+            href = str(anchor.get("href") or "").strip()
+            title = " ".join(anchor.get_text(" ", strip=True).split()) or href
+            snippet_node = (
+                article.select_one(".content")
+                or article.select_one("p")
+                or article.select_one(".detail")
+            )
+            snippet = ""
+            if snippet_node is not None:
+                snippet = _clean_browser_snippet(snippet_node.get_text(" ", strip=True))
+            results.append(
+                {
+                    "id": len(results) + 1,
+                    "title": title,
+                    "url": urljoin(base_url + "/", href),
+                    "snippet": snippet,
+                }
+            )
+            if len(results) >= max(0, limit):
+                break
+        return {
+            "success": True,
+            "query": query,
+            "backend": "searxng_html",
+            "base_url": base_url,
+            "results": results,
+            "count": len(results),
+        }
+    except Exception as exc:
+        return {
+            "error": (
+                f"搜索失败：无法使用本地 SearXNG（{base_url}）。"
+                "请确认实例已启动且搜索页可访问。"
+                f" 原始错误: {exc}"
+            )
+        }
+
+
 def _search_via_searx(query: str, limit: int = 5) -> dict:
     base_url = _searxng_base_url()
     try:
@@ -246,6 +304,10 @@ def _search_via_searx(query: str, limit: int = 5) -> dict:
             "count": len(results),
         }
     except Exception as exc:
+        fallback = _search_via_searx_html(base_url, query, limit)
+        if fallback.get("success"):
+            fallback["warning"] = f"SearXNG JSON 接口不可用，已回退到 HTML 解析。原始错误: {exc}"
+            return fallback
         return {
             "error": (
                 f"搜索失败：无法连接本地 SearXNG（{base_url}）。"
@@ -380,9 +442,7 @@ def grep_search(
                     line_end = len(file_content)
                 line_content = file_content[line_start:line_end].strip()
                 file_matches.append(f"Line {line_num}: {line_content[:100]}")
-            results.append(
-                f"File: {file_path.relative_to(search_path)}\n" + "\n".join(file_matches)
-            )
+            results.append(f"File: {file_path.relative_to(search_path)}\n" + "\n".join(file_matches))
             count += 1
             if count >= max_results:
                 break
@@ -492,17 +552,13 @@ def edit_file_lines(
                 return {"error": "replace 需要 new_content"}
             if not new_content.endswith("\n"):
                 new_content += "\n"
-            new_lines = (
-                lines[:start_index] + new_content.splitlines(keepends=True) + lines[end_index:]
-            )
+            new_lines = lines[:start_index] + new_content.splitlines(keepends=True) + lines[end_index:]
         elif operation == "insert":
             if new_content is None:
                 return {"error": "insert 需要 new_content"}
             if not new_content.endswith("\n"):
                 new_content += "\n"
-            new_lines = (
-                lines[:start_index] + new_content.splitlines(keepends=True) + lines[start_index:]
-            )
+            new_lines = lines[:start_index] + new_content.splitlines(keepends=True) + lines[start_index:]
         elif operation == "delete":
             new_lines = lines[:start_index] + lines[end_index:]
         else:
@@ -585,14 +641,10 @@ def run_python_code(code: str) -> dict:
     import tempfile
 
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False, encoding="utf-8"
-        ) as handle:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as handle:
             handle.write(code)
             tmp_path = handle.name
-        result = subprocess.run(
-            [sys.executable, tmp_path], capture_output=True, text=True, timeout=30
-        )
+        result = subprocess.run([sys.executable, tmp_path], capture_output=True, text=True, timeout=30)
         try:
             Path(tmp_path).unlink()
         except Exception:
