@@ -318,7 +318,7 @@ def test_setup_native_searxng_uses_wsl_on_windows(monkeypatch):
     ]
     assert install_cmd[5] == "-lc"
     assert "./utils/searxng.sh install all" in install_cmd[6]
-    assert "git clone --depth 1 --branch \"$branch\"" in install_cmd[6]
+    assert 'git clone --depth 1 --branch "$branch"' in install_cmd[6]
     assert install_kwargs["timeout"] is None
     assert install_kwargs["capture"] is False
 

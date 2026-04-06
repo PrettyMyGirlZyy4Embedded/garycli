@@ -127,7 +127,9 @@ def test_compose_system_prompt_caches_static_and_dynamic_parts(monkeypatch):
     monkeypatch.setattr("core.agent.get_context", lambda: ctx)
     monkeypatch.setattr(
         "core.agent.build_system_prompt",
-        lambda chip, language, hw_connected: build_calls.__setitem__("system", build_calls["system"] + 1)
+        lambda chip, language, hw_connected: build_calls.__setitem__(
+            "system", build_calls["system"] + 1
+        )
         or "static-base",
     )
     monkeypatch.setattr(

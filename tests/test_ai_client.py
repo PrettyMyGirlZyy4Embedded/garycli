@@ -153,24 +153,22 @@ def test_stream_chat_anthropic_emits_streaming_thinking_and_tools(monkeypatch):
 
         def iter_lines(self, decode_unicode=True):
             events = [
-                'event: content_block_start\n'
+                "event: content_block_start\n"
                 'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}\n\n',
-                'event: content_block_delta\n'
+                "event: content_block_delta\n"
                 'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"plan "}}\n\n',
-                'event: content_block_delta\n'
+                "event: content_block_delta\n"
                 'data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-1"}}\n\n',
-                'event: content_block_stop\n'
-                'data: {"type":"content_block_stop","index":0}\n\n',
-                'event: content_block_start\n'
+                "event: content_block_stop\n" 'data: {"type":"content_block_stop","index":0}\n\n',
+                "event: content_block_start\n"
                 'data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":"hello "}}\n\n',
-                'event: content_block_delta\n'
+                "event: content_block_delta\n"
                 'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"world"}}\n\n',
-                'event: content_block_start\n'
+                "event: content_block_start\n"
                 'data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"call_1","name":"foo","input":{}}}\n\n',
-                'event: content_block_delta\n'
+                "event: content_block_delta\n"
                 'data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\\"x\\":1}"}}\n\n',
-                'event: message_stop\n'
-                'data: {"type":"message_stop"}\n\n',
+                "event: message_stop\n" 'data: {"type":"message_stop"}\n\n',
             ]
             for item in events:
                 for line in item.splitlines():
@@ -224,7 +222,9 @@ def test_stream_chat_anthropic_emits_streaming_thinking_and_tools(monkeypatch):
         for chunk in chunks
         if chunk.choices[0].delta.tool_calls
     )
-    thinking_blocks = [chunk.anthropic_thinking_blocks for chunk in chunks if chunk.anthropic_thinking_blocks]
+    thinking_blocks = [
+        chunk.anthropic_thinking_blocks for chunk in chunks if chunk.anthropic_thinking_blocks
+    ]
 
     assert reasoning == "plan "
     assert content == "hello world"
@@ -252,10 +252,9 @@ def test_stream_chat_anthropic_retries_without_thinking(monkeypatch):
 
         def iter_lines(self, decode_unicode=True):
             events = [
-                'event: content_block_start\n'
+                "event: content_block_start\n"
                 'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"ok"}}\n\n',
-                'event: message_stop\n'
-                'data: {"type":"message_stop"}\n\n',
+                "event: message_stop\n" 'data: {"type":"message_stop"}\n\n',
             ]
             for item in events:
                 for line in item.splitlines():
@@ -284,7 +283,9 @@ def test_stream_chat_anthropic_retries_without_thinking(monkeypatch):
 
     try:
         chunks = list(
-            ai_client.stream_chat(messages=[{"role": "user", "content": "hi"}], enable_thinking=True)
+            ai_client.stream_chat(
+                messages=[{"role": "user", "content": "hi"}], enable_thinking=True
+            )
         )
     finally:
         ai_client.AI_API_STYLE = old_style
@@ -307,10 +308,9 @@ def test_stream_chat_anthropic_disables_thinking_by_default(monkeypatch):
 
         def iter_lines(self, decode_unicode=True):
             events = [
-                'event: content_block_start\n'
+                "event: content_block_start\n"
                 'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"ok"}}\n\n',
-                'event: message_stop\n'
-                'data: {"type":"message_stop"}\n\n',
+                "event: message_stop\n" 'data: {"type":"message_stop"}\n\n',
             ]
             for item in events:
                 for line in item.splitlines():
@@ -370,7 +370,14 @@ def test_stream_chat_gemini_disables_include_thoughts_by_default(monkeypatch):
             self.thinking_config = kwargs.get("thinking_config")
 
     class DummyPart:
-        def __init__(self, text=None, thought=False, function_call=None, thought_signature=None, function_response=None):
+        def __init__(
+            self,
+            text=None,
+            thought=False,
+            function_call=None,
+            thought_signature=None,
+            function_response=None,
+        ):
             self.text = text
             self.thought = thought
             self.function_call = function_call
@@ -412,7 +419,9 @@ def test_stream_chat_gemini_disables_include_thoughts_by_default(monkeypatch):
     monkeypatch.setattr(ai_client, "_load_gemini_sdk", lambda: (object(), dummy_types))
     monkeypatch.setattr(ai_client, "get_ai_client", lambda timeout=180.0: DummyClient())
     monkeypatch.setattr(ai_client, "AI_API_STYLE", "gemini")
-    monkeypatch.setattr(ai_client, "AI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
+    monkeypatch.setattr(
+        ai_client, "AI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
+    )
     monkeypatch.setattr(ai_client, "AI_MODEL", "gemini-2.5-flash")
 
     list(ai_client.stream_chat(messages=[{"role": "user", "content": "hi"}]))
