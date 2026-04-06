@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from core.micropython_tools import (
+    _build_gary_bootstrap,
     micropython_compile,
     micropython_connect,
     micropython_flash,
@@ -102,6 +103,9 @@ def test_canmv_flash_deploys_managed_bundle(monkeypatch):
         assert files[0][0] == "/sdcard/boot.py"
         assert files[1][0] == "/sdcard/gary_run.py"
         assert files[2][0] == "/sdcard/gary_autorun.flag"
+        assert "Gary:RUN_START" in files[0][1]
+        assert "Gary:RUN_ERROR" in files[0][1]
+        assert "raise" in files[0][1]
         assert calls[0]["remove_paths"] == ["/sdcard/main.py"]
     finally:
         ctx.chip = old_chip
@@ -144,8 +148,7 @@ def test_micropython_flash_syncs_explicit_file_before_upload(tmp_path, monkeypat
     monkeypatch.setattr(
         "core.micropython_tools.sync_latest_workspace",
         lambda code, chip=None: (
-            sync_calls.append((code, chip or ""))
-            or {
+            sync_calls.append((code, chip or "")) or {
                 "success": True,
                 "path": "workspace/projects/latest_workspace/main.py",
                 "source_file": "main.py",
@@ -188,8 +191,7 @@ def test_micropython_flash_uses_last_code_when_latest_workspace_missing(monkeypa
     monkeypatch.setattr(
         "core.micropython_tools.sync_latest_workspace",
         lambda code, chip=None: (
-            sync_calls.append((code, chip or ""))
-            or {
+            sync_calls.append((code, chip or "")) or {
                 "success": True,
                 "path": "workspace/projects/latest_workspace/main.py",
                 "source_file": "main.py",
@@ -266,9 +268,7 @@ def test_micropython_auto_sync_cycle_explains_raw_repl_failure(monkeypatch):
         "core.micropython_tools.micropython_compile",
         lambda *args, **kwargs: {"success": True, "message": "ok"},
     )
-    monkeypatch.setattr(
-        "core.micropython_tools.detect_serial_ports", lambda **kwargs: ["/dev/ttyACM0"]
-    )
+    monkeypatch.setattr("core.micropython_tools.detect_serial_ports", lambda **kwargs: ["/dev/ttyACM0"])
     monkeypatch.setattr(
         "core.micropython_tools.micropython_flash",
         lambda **kwargs: {
@@ -334,3 +334,14 @@ def test_micropython_soft_reset_uses_raw_repl_tool(monkeypatch):
         assert result["serial_connected"] is True
     finally:
         ctx.chip = old_chip
+
+
+def test_gary_bootstrap_reraises_user_code_errors():
+    """Managed boot.py should not swallow gary_run.py exceptions."""
+
+    script = _build_gary_bootstrap("CANMV_K230")
+
+    assert "Gary:RUN_START" in script
+    assert "Gary:RUN_ERROR" in script
+    assert "sys.print_exception" not in script
+    assert " except Exception:\n  print('Gary:RUN_ERROR')\n  raise\n" in script
