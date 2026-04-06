@@ -486,7 +486,12 @@ _AI_PRESETS = [
         "gemini-2.5-flash",
         "gemini",
     ),
-    ("通义千问 (阿里云)", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus", "openai"),
+    (
+        "通义千问 (阿里云)",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "qwen-plus",
+        "openai",
+    ),
     ("智谱 GLM", "https://open.bigmodel.cn/api/paas/v4/", "glm-4-flash", "openai"),
     ("Ollama (本地无需Key)", "http://127.0.0.1:11434/v1", "qwen2.5-coder:14b", "openai"),
     ("自定义 / Other", "", "", ""),
@@ -662,7 +667,11 @@ def configure_ai(auto: bool):
     default_model = (
         preset_model
         if preset_model
-        else (current_model_for_style if current_model_for_style else default_models.get(api_style, "gpt-4o"))
+        else (
+            current_model_for_style
+            if current_model_for_style
+            else default_models.get(api_style, "gpt-4o")
+        )
     )
     hint = f" [{_c('36', default_model)}]"
 
@@ -1469,7 +1478,11 @@ def setup_local_searxng(auto: bool, *, explicit: bool = False):
     if not runtime:
         warn("未找到 docker / podman，容器一键安装不可用")
         info("可改用官方原生安装：python setup.py --searxng-native")
-        if not auto and not explicit and ask("改用官方原生方式安装本地 SearXNG（需要 git + sudo）？", default="y"):
+        if (
+            not auto
+            and not explicit
+            and ask("改用官方原生方式安装本地 SearXNG（需要 git + sudo）？", default="y")
+        ):
             setup_native_searxng(auto=True, explicit=True)
         return
 
@@ -2001,7 +2014,9 @@ def _install_gary_unix(auto: bool):
 def _install_gary_win(auto: bool):
     install_dir = _resolve_win_install_dir()
     gary_bat = install_dir / "gary.bat"
-    expected_content = _GARY_BAT.format(agent_script=str(AGENT_SCRIPT), python=_active_python_path())
+    expected_content = _GARY_BAT.format(
+        agent_script=str(AGENT_SCRIPT), python=_active_python_path()
+    )
 
     if gary_bat.exists():
         existing = gary_bat.read_text(encoding="utf-8", errors="ignore")
