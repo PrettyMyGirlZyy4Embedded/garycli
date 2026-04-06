@@ -322,7 +322,9 @@ class SkillsManager:
                 )
         return "\n".join(parts)
 
-    def get_prompt_additions_for_tools(self, tool_names: set[str] | list[str] | tuple[str, ...]) -> str:
+    def get_prompt_additions_for_tools(
+        self, tool_names: set[str] | list[str] | tuple[str, ...]
+    ) -> str:
         """Return prompt additions only for enabled skills relevant to selected tools."""
 
         active = {str(name or "").strip() for name in (tool_names or []) if str(name or "").strip()}
