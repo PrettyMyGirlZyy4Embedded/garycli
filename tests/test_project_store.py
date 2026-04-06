@@ -22,7 +22,9 @@ def test_sync_latest_workspace_uses_main_py_for_rp2040(tmp_path, monkeypatch):
 
     assert result["success"] is True
     assert result["source_file"] == "main.py"
-    assert (tmp_path / "latest_workspace" / "main.py").read_text(encoding="utf-8") == "print('Gary:BOOT')\n"
+    assert (tmp_path / "latest_workspace" / "main.py").read_text(
+        encoding="utf-8"
+    ) == "print('Gary:BOOT')\n"
 
 
 def test_save_and_read_project_for_rp2040(tmp_path, monkeypatch):
