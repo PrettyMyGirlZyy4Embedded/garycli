@@ -7,6 +7,7 @@ from pathlib import Path
 from config import DEFAULT_CLOCK
 from core.platforms import (
     canonical_target_name,
+    device_bootstrap_path_for_target,
     device_main_path_for_target,
     device_root_for_target,
     detect_target_platform,
@@ -141,7 +142,8 @@ def build_system_prompt(chip: str, language: str, hw_connected: bool) -> str:
                 f"- Current target: `{chip_name}`\n"
                 f"- Runtime: `{target_runtime_label(chip_name)}`\n"
                 f"- Source file: `{source_filename_for_target(chip_name)}`\n"
-                f"- Device main path: `{device_main_path_for_target(chip_name)}`\n"
+                f"- Device bootstrap path: `{device_bootstrap_path_for_target(chip_name)}`\n"
+                f"- Device run path: `{device_main_path_for_target(chip_name)}`\n"
                 f"- Writable device root: `{device_root_for_target(chip_name)}`\n"
                 f"- CLI language: `{normalized_language}`\n"
                 f"- Hardware connected: `{str(bool(hw_connected)).lower()}`\n"
@@ -165,7 +167,8 @@ def build_system_prompt(chip: str, language: str, hw_connected: bool) -> str:
                 f"- 当前目标板：`{chip_name}`\n"
                 f"- 当前运行时：`{target_runtime_label(chip_name)}`\n"
                 f"- 当前主源码：`{source_filename_for_target(chip_name)}`\n"
-                f"- 板端主脚本路径：`{device_main_path_for_target(chip_name)}`\n"
+                f"- 板端引导脚本路径：`{device_bootstrap_path_for_target(chip_name)}`\n"
+                f"- 板端运行脚本路径：`{device_main_path_for_target(chip_name)}`\n"
                 f"- 板端可写根目录：`{device_root_for_target(chip_name)}`\n"
                 f"- 当前 CLI 语言：`{normalized_language}`\n"
                 f"- 当前硬件连接状态：`{str(bool(hw_connected)).lower()}`\n"

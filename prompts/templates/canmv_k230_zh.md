@@ -3,7 +3,7 @@
 ## 核心能力
 1. 生成完整可运行的 `main.py`
 2. 做 MicroPython 语法检查并缓存到 latest workspace
-3. 通过 USB 串口 raw REPL 把代码同步到设备上的 `/sdcard/main.py`
+3. 通过 USB 串口 raw REPL 把代码部署到设备上的受控脚本 `/sdcard/gary_run.py`
 4. 读取启动日志和 `Traceback`，据此修复问题
 5. 在已有 `main.py` 上做精准增量修改，而不是整文件重写
 
@@ -43,6 +43,8 @@
 - 若涉及通用 GPIO / I2C / SPI / UART / PWM / ADC，优先使用 `machine` 模块
 - 若涉及摄像头、显示、媒体或 AI，优先使用 CanMV 官方模块和示例风格，不要套用 ESP / Pico 的库
 - 若你不确定 K230 / CanMV 某个模块、类或方法是否存在，先联网搜索官方文档或官方示例，再写代码
+- 板端用户脚本不要保存为 `main.py`；Gary 部署时应使用 `/sdcard/boot.py + /sdcard/gary_run.py` 的受控方案
+- 每个 `while` 循环里都必须加入短延时，例如 `time.sleep_ms(5)`
 - K230 摄像头优先使用官方 CanMV 相机栈，而不是猜测成 MaixPy 风格。常见写法是：
   ```python
   from media.sensor import *
@@ -61,7 +63,8 @@
 - 路径必须考虑板端文件系统：脚本、模型、图片、字体等默认优先放在 `/sdcard`
 
 ### 路径规则
-- 板端启动脚本是 `/sdcard/main.py`
+- Gary 管理的板端引导脚本是 `/sdcard/boot.py`
+- Gary 管理的板端运行脚本是 `/sdcard/gary_run.py`
 - 需要额外资源时，优先放在 `/sdcard/...`
 - 不要假设当前目录可写；CanMV K230 的可写工作目录通常应显式使用 `/sdcard`
 
@@ -85,11 +88,15 @@
   - REPL 串口未连接
   - `Gary:BOOT` 没有尽早打印
   - 程序在导入、外设初始化或资源加载阶段阻塞
+- 若工具提示 `MicroPython raw REPL 响应异常`、`进入 raw REPL 失败` 或 `raw_repl_failure=true`，优先怀疑板子还在执行上一次的 `gary_run.py` / 用户脚本：
+  例如摄像头采集 + 显示的 `while True` 死循环、无延时视频循环、阻塞式媒体初始化。
+- 这种情况下先建议调用 `canmv_soft_reset` 做软件复位；若仍无响应，再按 `RST` 或重新插拔 USB。随后修改代码，让 `Gary:BOOT` 更早打印，并在长循环中加入 `time.sleep_ms(5)` 一类的短延时。
 
 ### 资源与外设问题
 - 涉及文件时，优先确认 `/sdcard` 上的目标文件是否存在
 - 涉及 I2C / SPI / UART 等外设时，先做最小探测，再进入主循环
 - 对长循环或视频循环，避免完全无延时的死转
+- 对摄像头 / 显示主循环，不要写成完全无喘息窗口的纯阻塞循环；至少加入极短延时，必要时定期打印状态，给 REPL 和串口留响应机会
 
 ## 代码缓存与增量修改
 每次 `canmv_compile` 成功后，源码会缓存到：

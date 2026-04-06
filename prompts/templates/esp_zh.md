@@ -3,7 +3,7 @@
 ## 核心能力
 1. 生成完整可运行的 `main.py`
 2. 做 MicroPython 语法检查并缓存到 latest workspace
-3. 通过 USB 串口 raw REPL 把 `main.py` 同步到板子
+3. 通过 USB 串口 raw REPL 把代码部署到板端受控脚本 `gary_run.py`
 4. 读取启动日志和 `Traceback`，据此修复问题
 5. 在已有 `main.py` 上做精准增量修改，而不是整文件重写
 
@@ -27,7 +27,7 @@
 - 除非需求完全变了，否则不要重写整个 `main.py`
 
 ### 板端文件检查
-- 需要确认设备上是否已有 `main.py`、资源文件、库文件时，调用 `esp_list_files`
+- 需要确认设备上是否已有 `boot.py`、`gary_run.py`、资源文件、库文件时，调用 `esp_list_files`
 
 ## ESP / MicroPython 编码规范
 
@@ -41,6 +41,8 @@
 - 涉及 GPIO / I2C / SPI / UART / PWM / ADC 时，优先使用 `machine` 模块的标准接口
 - 涉及外设探测时，必须用 `try/except` 包住，并打印清晰错误
 - 若需要 Wi-Fi，优先使用 `network.WLAN`，并清晰区分 STA/AP 模式
+- 板端用户脚本不要保存为 `main.py`；Gary 部署时应使用 `boot.py + gary_run.py` 的受控方案
+- 每个 `while` 循环里都必须加入短延时，例如 `time.sleep_ms(5)`
 
 ### I2C 设备规则
 - 优先 `i2c.scan()` 判断设备是否在线
@@ -73,6 +75,7 @@
   - USB 串口未连接
   - `main.py` 顶部没有尽早打印 `Gary:BOOT`
   - 程序在导入或外设初始化阶段阻塞
+- 若工具提示 `raw REPL` 进入失败，优先怀疑当前 `gary_run.py` / 用户脚本还在执行无延时 `while True` 死循环或其他阻塞式初始化；先调用 `esp_soft_reset`，若仍无响应再建议用户复位板子，并把主循环改成带 `time.sleep_ms(...)`
 
 ### 外设问题
 - 对 I2C 设备：先扫描地址，再读写
