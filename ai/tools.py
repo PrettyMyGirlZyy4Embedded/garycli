@@ -30,7 +30,7 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "chip": {
                         "type": "string",
-                        "description": "芯片型号，如 STM32F103C8T6、PICO_W、ESP32；也可传 MICROPYTHON 自动扫描识别（可选，不填用当前设置）",
+                        "description": "芯片型号，如 STM32F103C8T6、PICO_W、ESP32、CANMV_K230；也可传 MICROPYTHON 自动扫描识别（可选，不填用当前设置）",
                     },
                 },
                 "required": [],
@@ -409,10 +409,7 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "code": {
-                        "type": "string",
-                        "description": "主源码内容（STM32 为 main.c，MicroPython 目标为 main.py）",
-                    },
+                    "code": {"type": "string", "description": "主源码内容（STM32 为 main.c，MicroPython 目标为 main.py）"},
                     "request": {"type": "string", "description": "项目描述（作为目录名）"},
                 },
                 "required": ["code"],
@@ -578,10 +575,7 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "code": {"type": "string", "description": "完整的 main.py 代码"},
-                    "chip": {
-                        "type": "string",
-                        "description": "可选：目标板名称，如 ESP32-S3、ESP32-C3、ESP8266、NodeMCU",
-                    },
+                    "chip": {"type": "string", "description": "可选：目标板名称，如 ESP32-S3、ESP32-C3、ESP8266、NodeMCU"},
                 },
                 "required": ["code"],
             },
@@ -630,6 +624,101 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "设备目录路径，默认 ."},
+                    "port": {"type": "string", "description": "可选：串口设备路径"},
+                    "baud": {"type": "integer", "description": "串口波特率，默认 115200"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "canmv_connect",
+            "description": "通过 USB 串口连接 CanMV K230 / K230D，并切到 CanMV MicroPython 工作流。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chip": {
+                        "type": "string",
+                        "description": "可选：目标板名称，如 CANMV_K230、CANMV_K230D、K230、K230D",
+                    },
+                    "port": {
+                        "type": "string",
+                        "description": "可选：串口设备路径，如 /dev/ttyACM0",
+                    },
+                    "baud": {"type": "integer", "description": "串口波特率，默认 115200"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "canmv_hardware_status",
+            "description": "查询 CanMV K230 + MicroPython 当前状态：目标板、串口连接、候选串口、设备主脚本路径。",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "canmv_compile",
+            "description": "对完整 main.py 做 CanMV MicroPython 语法检查，并缓存到 workspace/projects/latest_workspace/main.py。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string", "description": "完整的 main.py 代码"},
+                    "chip": {"type": "string", "description": "可选：目标板名称，如 CANMV_K230 或 CANMV_K230D"},
+                },
+                "required": ["code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "canmv_flash",
+            "description": "通过 MicroPython raw REPL 把 main.py 同步到 CanMV 设备上的 /sdcard/main.py，并软复位执行。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "可选：本地 .py 文件路径；不填则使用 workspace/projects/latest_workspace/main.py",
+                    },
+                    "port": {"type": "string", "description": "可选：串口设备路径"},
+                    "baud": {"type": "integer", "description": "串口波特率，默认 115200"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "canmv_auto_sync_cycle",
+            "description": "CanMV K230 推荐闭环：语法检查 main.py → 同步到 /sdcard/main.py → 软复位 → 读取启动日志/Traceback。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string", "description": "完整的 main.py 代码"},
+                    "request": {"type": "string", "description": "项目描述（用于保存项目，可选）"},
+                },
+                "required": ["code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "canmv_list_files",
+            "description": "列出当前 CanMV 设备上的文件；默认优先查看 /sdcard，用于检查 main.py、模型和资源文件是否已经同步。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "设备目录路径，默认 .（CanMV 默认会转到 /sdcard）"},
                     "port": {"type": "string", "description": "可选：串口设备路径"},
                     "baud": {"type": "integer", "description": "串口波特率，默认 115200"},
                 },
