@@ -48,6 +48,44 @@ def _read_until_any(ser: Any, tokens: list[bytes], timeout: float = 3.0) -> byte
     return data
 
 
+def _raw_repl_failure_result(banner: bytes) -> dict[str, Any]:
+    """Build a structured failure payload for raw REPL handshake issues."""
+
+    decoded = _decode(banner)[:160]
+    summary = (
+        "进入 raw REPL 失败：设备没有正确响应 Ctrl+A。"
+        "当前板子可能仍在执行上一次部署的用户脚本，例如无延时的 while True 死循环、摄像头/显示循环，"
+        "或阻塞式初始化。"
+    )
+    recovery_suggestions = [
+        "先按板载 RST 键或重新插拔 USB，让设备重新上电后再重试",
+        "若用户脚本中有 while True / 摄像头采集 / 屏幕刷新循环，请加入 time.sleep_ms(5) 一类的短延时",
+        "把 print('Gary:BOOT') 放到文件顶部更靠前的位置，避免初始化阶段完全无输出",
+        "若串口多次失败后僵死，先物理复位，再执行 list_files / flash / auto_sync_cycle",
+    ]
+    suspected_causes = [
+        "当前用户脚本持续占用解释器，REPL 无法接管",
+        "程序阻塞在导入、外设初始化、摄像头或显示初始化阶段",
+        "串口缓冲区或 USB-Serial 状态已半挂起，需要复位清理",
+    ]
+    payload: dict[str, Any] = {
+        "success": False,
+        "message": summary if not decoded else f"{summary} 原始响应: {decoded}",
+        "reason": "raw_repl_unresponsive",
+        "raw_repl_failure": True,
+        "banner": decoded,
+        "recovery_suggestions": recovery_suggestions,
+        "suspected_causes": suspected_causes,
+    }
+    return payload
+
+
+def _with_port(data: dict[str, Any], port: str) -> dict[str, Any]:
+    payload = dict(data)
+    payload["port"] = port
+    return payload
+
+
 def _open_serial(port: str, baud: int):
     try:
         import serial as pyserial  # type: ignore
@@ -60,20 +98,29 @@ def _open_serial(port: str, baud: int):
 
 
 def _enter_raw_repl(ser: Any, *, console: Any = None) -> dict[str, Any]:
-    ser.write(b"\r\x03\x03")
-    ser.flush()
-    time.sleep(0.15)
-    ser.reset_input_buffer()
-    ser.write(b"\r\x01")
-    ser.flush()
-    banner = _read_until_any(ser, [b"raw REPL; CTRL-B to exit", b"\n>"], timeout=2.0)
-    ok = b"raw REPL" in banner or banner.rstrip().endswith(b">")
-    if not ok:
-        _console_print(
-            console, f"[yellow]  MicroPython raw REPL 响应异常: {_decode(banner)[:120]}[/]"
-        )
-        return {"success": False, "message": f"进入 raw REPL 失败: {_decode(banner)[:160]}"}
-    return {"success": True, "banner": _decode(banner)}
+    banner = b""
+    for attempt in range(2):
+        ser.write(b"\r\x03\x03")
+        ser.flush()
+        time.sleep(0.15)
+        try:
+            ser.write(b"\x02")
+            ser.flush()
+            time.sleep(0.05)
+        except Exception:
+            pass
+        ser.reset_input_buffer()
+        ser.write(b"\r\x01")
+        ser.flush()
+        banner = _read_until_any(ser, [b"raw REPL; CTRL-B to exit", b"\n>"], timeout=2.0)
+        ok = b"raw REPL" in banner or banner.rstrip().endswith(b">")
+        if ok:
+            return {"success": True, "banner": _decode(banner)}
+        if attempt == 0:
+            time.sleep(0.2)
+    failure = _raw_repl_failure_result(banner)
+    _console_print(console, f"[yellow]  MicroPython raw REPL 响应异常: {failure.get('banner', '')[:120]}[/]")
+    return failure
 
 
 def _exit_raw_repl(ser: Any) -> None:
@@ -141,6 +188,26 @@ def _build_write_script(device_path: str, content: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _build_remove_script(paths: list[str]) -> str:
+    lines = [
+        "try:",
+        " import os",
+        "except ImportError:",
+        " import uos as os",
+    ]
+    for item in paths:
+        lines.extend(
+            [
+                "try:",
+                f" os.remove({item!r})",
+                f" print('GARY_REMOVE_OK:{item}')",
+                "except OSError:",
+                " pass",
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
 def _build_probe_script() -> str:
     return "\n".join(
         [
@@ -205,11 +272,7 @@ def upload_text_file(
     try:
         raw = _enter_raw_repl(ser, console=console)
         if not raw.get("success"):
-            return {
-                "success": False,
-                "message": raw.get("message", "进入 raw REPL 失败"),
-                "port": port,
-            }
+            return _with_port(raw, port)
 
         result = _exec_raw(ser, _build_write_script(device_path, content), timeout=12.0)
         if not result.get("success"):
@@ -234,6 +297,118 @@ def upload_text_file(
             "port": port,
             "device_path": device_path,
             "stdout": result.get("stdout", ""),
+            "boot_output": boot_output,
+        }
+    except Exception as exc:
+        return {"success": False, "message": str(exc), "port": port}
+    finally:
+        try:
+            ser.close()
+        except Exception:
+            pass
+
+
+def sync_text_files(
+    *,
+    port: str,
+    files: list[tuple[str, str]],
+    remove_paths: list[str] | None = None,
+    baud: int = 115200,
+    console: Any = None,
+    soft_reset: bool = False,
+    capture_timeout: float = 4.0,
+) -> dict[str, Any]:
+    """Write multiple text files in one raw-REPL session and optionally soft-reset."""
+
+    try:
+        ser = _open_serial(port, baud)
+    except Exception as exc:
+        return {"success": False, "message": f"打开串口失败: {exc}", "port": port}
+
+    try:
+        raw = _enter_raw_repl(ser, console=console)
+        if not raw.get("success"):
+            return _with_port(raw, port)
+
+        written: list[str] = []
+        for device_path, content in files:
+            result = _exec_raw(ser, _build_write_script(device_path, content), timeout=12.0)
+            if not result.get("success"):
+                return {
+                    "success": False,
+                    "message": f"写入设备文件失败: {device_path}",
+                    "port": port,
+                    "device_path": device_path,
+                    "stdout": result.get("stdout", ""),
+                    "stderr": result.get("stderr", ""),
+                }
+            written.append(device_path)
+
+        removed: list[str] = []
+        if remove_paths:
+            cleanup = _exec_raw(ser, _build_remove_script(remove_paths), timeout=6.0)
+            if not cleanup.get("success"):
+                return {
+                    "success": False,
+                    "message": "清理旧启动脚本失败",
+                    "port": port,
+                    "stdout": cleanup.get("stdout", ""),
+                    "stderr": cleanup.get("stderr", ""),
+                }
+            removed = list(remove_paths)
+
+        boot_output = ""
+        if soft_reset:
+            _exit_raw_repl(ser)
+            ser.reset_input_buffer()
+            ser.write(b"\x04")
+            ser.flush()
+            boot_output = _decode(_read_all(ser, capture_timeout))
+
+        return {
+            "success": True,
+            "message": f"已同步 {len(written)} 个设备文件",
+            "port": port,
+            "written_paths": written,
+            "removed_paths": removed,
+            "boot_output": boot_output,
+        }
+    except Exception as exc:
+        return {"success": False, "message": str(exc), "port": port}
+    finally:
+        try:
+            ser.close()
+        except Exception:
+            pass
+
+
+def soft_reset_board(
+    *,
+    port: str,
+    baud: int = 115200,
+    console: Any = None,
+    capture_timeout: float = 4.0,
+) -> dict[str, Any]:
+    """Soft-reset a MicroPython board through the serial REPL."""
+
+    try:
+        ser = _open_serial(port, baud)
+    except Exception as exc:
+        return {"success": False, "message": f"打开串口失败: {exc}", "port": port}
+
+    try:
+        raw = _enter_raw_repl(ser, console=console)
+        if not raw.get("success"):
+            return _with_port(raw, port)
+        _exit_raw_repl(ser)
+        ser.reset_input_buffer()
+        ser.write(b"\x04")
+        ser.flush()
+        boot_output = _decode(_read_all(ser, capture_timeout))
+        return {
+            "success": True,
+            "message": "已发送 MicroPython soft reset",
+            "port": port,
             "boot_output": boot_output,
         }
     except Exception as exc:
@@ -274,11 +449,7 @@ def list_remote_files(
     try:
         raw = _enter_raw_repl(ser, console=console)
         if not raw.get("success"):
-            return {
-                "success": False,
-                "message": raw.get("message", "进入 raw REPL 失败"),
-                "port": port,
-            }
+            return _with_port(raw, port)
         result = _exec_raw(ser, script, timeout=6.0)
         if not result.get("success"):
             return {
@@ -314,11 +485,7 @@ def probe_micropython_board(
     try:
         raw = _enter_raw_repl(ser, console=console)
         if not raw.get("success"):
-            return {
-                "success": False,
-                "message": raw.get("message", "进入 raw REPL 失败"),
-                "port": port,
-            }
+            return _with_port(raw, port)
         result = _exec_raw(ser, _build_probe_script(), timeout=6.0)
         if not result.get("success"):
             return {
@@ -377,11 +544,7 @@ def scan_micropython_boards(
         "success": bool(boards),
         "ports": ports or [],
         "boards": boards,
-        "message": (
-            f"检测到 {len(boards)} 个可识别的 MicroPython 设备"
-            if boards
-            else "未检测到可识别的 MicroPython 设备"
-        ),
+        "message": f"检测到 {len(boards)} 个可识别的 MicroPython 设备" if boards else "未检测到可识别的 MicroPython 设备",
     }
 
 
@@ -389,5 +552,7 @@ __all__ = [
     "list_remote_files",
     "probe_micropython_board",
     "scan_micropython_boards",
+    "soft_reset_board",
+    "sync_text_files",
     "upload_text_file",
 ]
