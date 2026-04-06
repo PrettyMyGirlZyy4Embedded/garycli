@@ -1271,7 +1271,7 @@ def setup_local_searxng(auto: bool):
                 return
     else:
         info(f"拉取镜像: {image}")
-        pull_result = _run([runtime, "pull", image], capture=False, timeout=900)
+        pull_result = _run([runtime, "pull", image], capture=False, timeout=9000)
         if pull_result.returncode != 0:
             warn(f"镜像拉取失败，请手动重试: {runtime} pull {image}")
             return
