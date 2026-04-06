@@ -26,12 +26,7 @@ from hardware.micropython import (
     soft_reset_board,
     sync_text_files,
 )
-from hardware.serial_mon import (
-    SerialMonitor,
-    connect_serial,
-    detect_serial_ports,
-    disconnect_serial,
-)
+from hardware.serial_mon import SerialMonitor, connect_serial, detect_serial_ports, disconnect_serial
 
 
 def _micropython_platform_label(chip: str | None) -> str:
@@ -55,9 +50,7 @@ def _micropython_port_help(chip: str | None) -> str:
     return f"未检测到 {label} 常见 USB 串口，请确认开发板已刷入 MicroPython 且 USB 数据线可传输"
 
 
-def _normalize_raw_repl_error(
-    result: dict[str, Any] | None, chip: str | None
-) -> dict[str, Any] | None:
+def _normalize_raw_repl_error(result: dict[str, Any] | None, chip: str | None) -> dict[str, Any] | None:
     """Rewrite raw-REPL transport failures into a clearer diagnostic payload."""
 
     data = dict(result or {})
@@ -84,6 +77,30 @@ def _normalize_raw_repl_error(
         }
     )
     return data
+
+
+def _inspect_boot_output(boot_output: str) -> dict[str, Any]:
+    """Classify captured boot output so deploy success and runtime success stay separate."""
+
+    lines = [line.strip() for line in str(boot_output or "").splitlines() if line.strip()]
+    boot_ok = "Gary:BOOT" in boot_output
+    run_started = "Gary:RUN_START" in boot_output
+    run_done = "Gary:RUN_DONE" in boot_output
+    run_error = "Gary:RUN_ERROR" in boot_output
+    traceback_present = "Traceback (most recent call last)" in boot_output or "Traceback:" in boot_output
+    informative_lines = [line for line in lines if line != "Gary:BOOT"]
+    runtime_confirmed = run_started or run_done or run_error or traceback_present or bool(informative_lines)
+    return {
+        "lines": lines,
+        "boot_ok": boot_ok,
+        "run_started": run_started,
+        "run_done": run_done,
+        "run_error": run_error,
+        "traceback": traceback_present,
+        "serial_output_observed": bool(lines),
+        "bootstrap_only": boot_ok and not runtime_confirmed,
+        "runtime_confirmed": runtime_confirmed,
+    }
 
 
 _LOOP_DELAY_CALLS = {
@@ -192,7 +209,8 @@ def _managed_device_files(chip: str | None, code: str) -> tuple[list[tuple[str, 
 def _looks_like_usb_device_port(port: str | None) -> bool:
     text = str(port or "").lower()
     return any(
-        token in text for token in ("ttyacm", "ttyusb", "usbmodem", "usbserial", "/cu.usb", "com")
+        token in text
+        for token in ("ttyacm", "ttyusb", "usbmodem", "usbserial", "/cu.usb", "com")
     )
 
 
@@ -507,11 +525,7 @@ def micropython_flash(
         elif ctx.last_code:
             code = ctx.last_code
         else:
-            return {
-                "success": False,
-                "platform": platform,
-                "message": f"源文件不存在: {source_path}",
-            }
+            return {"success": False, "platform": platform, "message": f"源文件不存在: {source_path}"}
 
     # 烧录前强制同步到 latest_workspace，保证后续运行报错时 AI 有稳定的编辑目标。
     ctx.last_code = code
@@ -566,24 +580,41 @@ def micropython_flash(
 
     reconnect = _reconnect_monitor(resolved_port, baud, console=console)
     boot_output = result.get("boot_output", "")
-    traceback_present = (
-        "Traceback (most recent call last)" in boot_output or "Traceback:" in boot_output
-    )
+    boot_info = _inspect_boot_output(boot_output)
     ctx.hw_connected = True
+    if boot_info["runtime_confirmed"]:
+        message = f"已部署 {device_main_path}（由 {device_bootstrap_path} 托管）到 {resolved_port}，并捕获到启动串口输出"
+    elif boot_info["bootstrap_only"]:
+        message = (
+            f"已部署 {device_main_path}（由 {device_bootstrap_path} 托管）到 {resolved_port}，"
+            "但只看到 boot.py 的引导输出，尚未确认 gary_run.py 已真正开始执行"
+        )
+    else:
+        message = (
+            f"已部署 {device_main_path}（由 {device_bootstrap_path} 托管）到 {resolved_port}，"
+            "但未捕获到任何串口输出，不能确认 gary_run.py 是否已运行"
+        )
     return {
         "success": True,
         "platform": platform,
         "port": resolved_port,
         "serial_connected": reconnect.get("success", False),
         "boot_output": boot_output,
-        "traceback": traceback_present,
+        "traceback": boot_info["traceback"],
+        "boot_ok": boot_info["boot_ok"],
+        "run_started": boot_info["run_started"],
+        "run_done": boot_info["run_done"],
+        "run_error": boot_info["run_error"],
+        "serial_output_observed": boot_info["serial_output_observed"],
+        "runtime_confirmed": boot_info["runtime_confirmed"],
+        "runtime_unverified": not boot_info["runtime_confirmed"],
         "source_path": sync_result.get("path"),
         "source_file": sync_result.get("source_file"),
         "device_bootstrap_path": device_bootstrap_path,
         "device_main_path": device_main_path,
         "device_autorun_flag_path": device_flag_path,
         "managed_bootstrap": True,
-        "message": f"已部署 {device_main_path}（由 {device_bootstrap_path} 托管）到 {resolved_port}",
+        "message": message,
     }
 
 
@@ -675,13 +706,7 @@ def micropython_auto_sync_cycle(
         record_success_memory=record_success_memory,
         log_error=log_error,
     )
-    steps.append(
-        {
-            "step": "compile",
-            "success": compile_result.get("success", False),
-            "msg": compile_result.get("message", ""),
-        }
-    )
+    steps.append({"step": "compile", "success": compile_result.get("success", False), "msg": compile_result.get("message", "")})
     if not compile_result.get("success"):
         error_message = compile_result.get("message", "MicroPython 检查失败")
         return {
@@ -691,24 +716,16 @@ def micropython_auto_sync_cycle(
             "give_up": False,
             "steps": steps,
             "compile_errors": error_message,
-            "error": (
-                error_message
-                if compile_result.get("error_type") == "while_loop_missing_delay"
-                else "MicroPython 语法错误，请按行号修复"
-            ),
+            "error": error_message
+            if compile_result.get("error_type") == "while_loop_missing_delay"
+            else "MicroPython 语法错误，请按行号修复",
             "platform": platform,
         }
 
     ports = detect_serial_ports(verbose=False)
     if not ports and not getattr(getattr(ctx, "serial", None), "port", None):
         if request:
-            save_project(
-                code,
-                {"bin_path": None, "bin_size": len(code.encode("utf-8"))},
-                request,
-                chip=ctx.chip,
-                console=console,
-            )
+            save_project(code, {"bin_path": None, "bin_size": len(code.encode("utf-8"))}, request, chip=ctx.chip, console=console)
         return {
             "success": True,
             "attempt": attempt,
@@ -718,13 +735,7 @@ def micropython_auto_sync_cycle(
         }
 
     flash_result = micropython_flash(code=code, baud=baud, console=console)
-    steps.append(
-        {
-            "step": "deploy",
-            "success": flash_result.get("success", False),
-            "msg": flash_result.get("message", ""),
-        }
-    )
+    steps.append({"step": "deploy", "success": flash_result.get("success", False), "msg": flash_result.get("message", "")})
     if not flash_result.get("success"):
         raw_repl_error = _normalize_raw_repl_error(flash_result, ctx.chip)
         if raw_repl_error is not None:
@@ -755,16 +766,19 @@ def micropython_auto_sync_cycle(
         }
 
     boot_output = flash_result.get("boot_output", "")
-    trace_lines = [line for line in boot_output.splitlines() if line.strip()]
+    boot_info = _inspect_boot_output(boot_output)
     steps.append(
         {
             "step": "uart",
             "output": boot_output[:800],
-            "boot_ok": "Gary:BOOT" in boot_output,
-            "has_traceback": flash_result.get("traceback", False),
+            "boot_ok": boot_info["boot_ok"],
+            "run_started": boot_info["run_started"],
+            "serial_output_observed": boot_info["serial_output_observed"],
+            "runtime_confirmed": boot_info["runtime_confirmed"],
+            "has_traceback": boot_info["traceback"] or flash_result.get("traceback", False),
         }
     )
-    if flash_result.get("traceback"):
+    if boot_info["traceback"] or flash_result.get("traceback"):
         return {
             "success": False,
             "attempt": attempt,
@@ -776,7 +790,6 @@ def micropython_auto_sync_cycle(
             "platform": platform,
         }
 
-    verified = "Gary:BOOT" in boot_output or bool(trace_lines)
     if request:
         save_project(
             code,
@@ -785,6 +798,32 @@ def micropython_auto_sync_cycle(
             chip=ctx.chip,
             console=console,
         )
+    if not boot_info["runtime_confirmed"]:
+        device_main_path = flash_result.get("device_main_path") or device_main_path_for_target(ctx.chip)
+        if boot_info["bootstrap_only"]:
+            error = (
+                f"代码已写入 {ctx.chip}，但只看到 boot.py 的引导输出，未看到 {device_main_path} 的启动标记或串口日志，"
+                "不能确认程序已经运行"
+            )
+        else:
+            error = (
+                f"代码已写入 {ctx.chip}，但未捕获到任何串口输出，不能确认 {device_main_path} 是否已运行"
+            )
+        return {
+            "success": False,
+            "attempt": attempt,
+            "remaining": max(0, remaining),
+            "give_up": False,
+            "steps": steps,
+            "error": error,
+            "note": error,
+            "platform": platform,
+            "deploy_success": True,
+            "runtime_unverified": True,
+            "verified": False,
+            "uart_output": boot_output[:2000],
+            "device_main_path": device_main_path,
+        }
     if record_success_memory is not None:
         try:
             record_success_memory(
@@ -803,13 +842,10 @@ def micropython_auto_sync_cycle(
         "attempt": attempt,
         "steps": steps,
         "platform": platform,
-        "verified": verified,
+        "verified": True,
         "uart_output": boot_output[:2000],
-        "note": (
-            "已看到启动/串口输出"
-            if verified
-            else f"已部署到 {ctx.chip}，但未捕获到串口输出；建议在 main.py 顶部尽早打印 Gary:BOOT"
-        ),
+        "runtime_confirmed": True,
+        "note": "已看到 gary_run.py 的启动/串口输出",
     }
 
 
