@@ -23,12 +23,7 @@ from ai.client import (
     reload_ai_config,
     stream_chat,
 )
-from ai.tools import (
-    TOOL_SCHEMAS,
-    bind_tool_implementations,
-    dispatch_tool_call,
-    select_tool_schemas,
-)
+from ai.tools import TOOL_SCHEMAS, bind_tool_implementations, dispatch_tool_call, select_tool_schemas
 from core.cli_config import configure_ai_cli as _configure_ai_cli_impl
 from core.docx_tools import (
     append_docx_content,
@@ -298,6 +293,23 @@ THEME = "cyan"
 MAX_CONTEXT_TOKENS = 258000
 MAX_TOOL_RESULT_LEN = 4000
 TRUNCATED_TOOL_RESULT_NOTICE = "[结果已截断，完整内容请查看工具输出日志]"
+_MICROPYTHON_SOFT_RESET_TOOLS = {"rp2040_soft_reset", "esp_soft_reset", "canmv_soft_reset"}
+_MICROPYTHON_DEPLOY_TOOLS = {
+    "rp2040_flash",
+    "rp2040_auto_sync_cycle",
+    "esp_flash",
+    "esp_auto_sync_cycle",
+    "canmv_flash",
+    "canmv_auto_sync_cycle",
+}
+_MICROPYTHON_RECOVERY_TOOLS = _MICROPYTHON_SOFT_RESET_TOOLS | _MICROPYTHON_DEPLOY_TOOLS | {
+    "rp2040_connect",
+    "rp2040_list_files",
+    "esp_connect",
+    "esp_list_files",
+    "canmv_connect",
+    "canmv_list_files",
+}
 
 # ─────────────────────────────────────────────────────────────
 # 寄存器地址表（按系列）
@@ -726,9 +738,7 @@ def canmv_soft_reset(port: str = None, baud: int = None) -> dict:
     )
 
 
-def _micropython_connect_for_target(
-    chip: str, port: str | None = None, baud: int | None = None
-) -> dict:
+def _micropython_connect_for_target(chip: str, port: str | None = None, baud: int | None = None) -> dict:
     platform = detect_target_platform(chip)
     if platform == "rp2040":
         return rp2040_connect(chip, port=port, baud=baud)
@@ -988,9 +998,7 @@ def stm32_compile_rtos(code: str, chip: str = None) -> dict:
     target_chip = _current_target(chip)
     ctx.chip = target_chip
     if is_micropython_target(target_chip):
-        return _micropython_not_supported(
-            "stm32_compile_rtos", "请改用对应的 MicroPython compile 或 auto_sync_cycle 工具"
-        )
+        return _micropython_not_supported("stm32_compile_rtos", "请改用对应的 MicroPython compile 或 auto_sync_cycle 工具")
     compiler = _get_compiler()
     if chip:
         compiler.set_chip(target_chip)
@@ -1045,9 +1053,7 @@ def stm32_recompile(mode: str = "auto") -> dict:
     code = source_path.read_text(encoding="utf-8")
     if source_path.suffix == ".py" or is_micropython_target(ctx.chip):
         if mode == "rtos":
-            return _micropython_not_supported(
-                "stm32_recompile(mode='rtos')", "MicroPython 目标不支持 FreeRTOS 编译"
-            )
+            return _micropython_not_supported("stm32_recompile(mode='rtos')", "MicroPython 目标不支持 FreeRTOS 编译")
         target_chip = ctx.chip if is_micropython_target(ctx.chip) else "ESP32"
         return _micropython_compile_for_target(code, target_chip)
     if mode == "auto":
@@ -1267,9 +1273,7 @@ def stm32_rtos_check_code(code: str) -> dict:
     检查 SysTick 冲突、HAL_Delay 陷阱、缺少 hook 函数、栈大小、ISR 安全等。
     """
     if is_micropython_target(_current_target()):
-        return _micropython_not_supported(
-            "stm32_rtos_check_code", "MicroPython 目标不使用 FreeRTOS C 工程"
-        )
+        return _micropython_not_supported("stm32_rtos_check_code", "MicroPython 目标不使用 FreeRTOS C 工程")
     import re
 
     errors = []
@@ -1417,9 +1421,7 @@ def stm32_rtos_task_stats() -> dict:
     需要先编译（有 ELF 文件）并连接硬件。
     """
     if is_micropython_target(_current_target()):
-        return _micropython_not_supported(
-            "stm32_rtos_task_stats", "MicroPython 目标没有这套 FreeRTOS 任务统计接口"
-        )
+        return _micropython_not_supported("stm32_rtos_task_stats", "MicroPython 目标没有这套 FreeRTOS 任务统计接口")
     if not get_context().hw_connected:
         return {"success": False, "message": "硬件未连接"}
 
@@ -2407,6 +2409,8 @@ class STM32Agent:
         self._tool_schema_cache: list[dict[str, Any]] = []
         self._tool_schema_signature: tuple[Any, ...] | None = None
         self._current_tool_task_hint = ""
+        self._turn_tool_attempts: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        self._turn_micropython_recovery_state: dict[str, Any] = {}
         self.messages: List[Dict] = [{"role": "system", "content": self._compose_system_prompt()}]
         self._pending_system_hint = ""
         self.client = get_ai_client(timeout=180.0)
@@ -2578,9 +2582,7 @@ class STM32Agent:
         system_content = ""
         if self.messages and self.messages[0].get("role") == "system":
             system_content = str(self.messages[0].get("content", "") or "")
-        baseline_messages = (
-            [{"role": "system", "content": system_content}] if system_content else []
-        )
+        baseline_messages = [{"role": "system", "content": system_content}] if system_content else []
         tool_schemas = self._current_tool_schemas()
         estimate = estimate_request_tokens(
             messages=baseline_messages,
@@ -2762,7 +2764,7 @@ class STM32Agent:
                     continue
 
                 pending = self._partial_think_tag_suffix(source, (close_tag,))
-                chunk = source[: -len(pending)] if pending else source
+                chunk = source[:-len(pending)] if pending else source
                 if chunk:
                     segments.append(("think", chunk))
                 state["pending"] = pending
@@ -2785,7 +2787,7 @@ class STM32Agent:
                 continue
 
             pending = self._partial_think_tag_suffix(source, (open_tag, close_tag))
-            chunk = source[: -len(pending)] if pending else source
+            chunk = source[:-len(pending)] if pending else source
             if chunk:
                 segments.append(("content", chunk))
             state["pending"] = pending
@@ -2804,9 +2806,7 @@ class STM32Agent:
         kind = "think" if state.get("inside_think", False) else "content"
         return [(kind, pending)]
 
-    def _request_final_reply_after_tools(
-        self, stream_to_console: bool = True
-    ) -> dict[str, Any] | None:
+    def _request_final_reply_after_tools(self, stream_to_console: bool = True) -> dict[str, Any] | None:
         """部分模型在工具执行后会停在空回复，这里补一次只求最终答复的请求。"""
         if stream_to_console:
             CONSOLE.print(
@@ -2962,6 +2962,78 @@ class STM32Agent:
             lines.append(f"- {item}")
         return "\n".join(lines)
 
+    def _reset_turn_tool_state(self) -> None:
+        """Clear per-turn tool retry guards."""
+
+        self._turn_tool_attempts = {}
+        self._turn_micropython_recovery_state = {
+            "soft_reset_success": False,
+            "post_reset_deploy_failed": False,
+        }
+
+    def _tool_signature(self, name: str, args: dict[str, Any]) -> tuple[str, str]:
+        """Build a stable per-turn signature for one tool call."""
+
+        try:
+            normalized = json.dumps(args or {}, ensure_ascii=False, sort_keys=True)
+        except Exception:
+            normalized = str(args or {})
+        return str(name or ""), normalized
+
+    def _should_block_redundant_tool_call(self, name: str, args: dict[str, Any]) -> dict[str, Any] | None:
+        """Return a synthetic tool result when the current turn is clearly retry-looping."""
+
+        previous_attempts = (self._turn_tool_attempts or {}).get(self._tool_signature(name, args), [])
+        if name not in _MICROPYTHON_RECOVERY_TOOLS:
+            return None
+        previous_failures = [item for item in previous_attempts if not item.get("success", False)]
+        if previous_failures:
+            last_failure = previous_failures[-1]
+            return {
+                "success": False,
+                "blocked_retry": True,
+                "message": (
+                    f"当前回合里 `{name}` 已用相同参数失败过一次。"
+                    "不要继续重复同一个 MicroPython 恢复工具；请基于已有错误直接总结下一步。"
+                ),
+                "previous_error": last_failure.get("message", ""),
+            }
+        recovery_state = self._turn_micropython_recovery_state or {}
+        if recovery_state.get("soft_reset_success") and recovery_state.get("post_reset_deploy_failed"):
+            return {
+                "success": False,
+                "blocked_retry": True,
+                "recovery_exhausted": True,
+                "message": (
+                    "当前回合已执行过一次 MicroPython soft reset，且复位后的 flash/auto_sync 仍失败。"
+                    "不要再继续反复 connect/list_files/flash/auto_sync；请直接告诉用户需要手动按 RST、重插 USB，"
+                    "或先修正板端脚本后再试。"
+                ),
+            }
+        return None
+
+    def _record_turn_tool_attempt(self, name: str, args: dict[str, Any], result_obj: Any) -> None:
+        """Track per-turn tool outcomes for retry suppression."""
+
+        if not isinstance(result_obj, dict):
+            return
+        signature = self._tool_signature(name, args)
+        self._turn_tool_attempts.setdefault(signature, []).append(
+            {
+                "success": bool(result_obj.get("success", False)),
+                "message": str(result_obj.get("message") or result_obj.get("error") or ""),
+                "raw_repl_failure": bool(result_obj.get("raw_repl_failure")),
+            }
+        )
+        if name in _MICROPYTHON_SOFT_RESET_TOOLS and result_obj.get("success"):
+            self._turn_micropython_recovery_state["soft_reset_success"] = True
+        if (
+            name in _MICROPYTHON_DEPLOY_TOOLS
+            and self._turn_micropython_recovery_state.get("soft_reset_success")
+            and not result_obj.get("success", False)
+        ):
+            self._turn_micropython_recovery_state["post_reset_deploy_failed"] = True
+
     # ── 流式响应 + 工具调用 ─────────────────────────────────
     def chat(
         self,
@@ -2973,6 +3045,7 @@ class STM32Agent:
         self._current_tool_schemas(user_input)
         self.refresh_system_prompt()
         self._prepare_web_research_hint(user_input)
+        self._reset_turn_tool_state()
         self.messages.append({"role": "user", "content": user_input})
         self._truncate_history()
         reply_parts: List[str] = []
@@ -3027,9 +3100,7 @@ class STM32Agent:
 
                         # 文本内容
                         if delta.content:
-                            for kind, piece in self._extract_think_segments(
-                                delta.content, think_tag_state
-                            ):
+                            for kind, piece in self._extract_think_segments(delta.content, think_tag_state):
                                 if not piece:
                                     continue
                                 if kind == "think":
@@ -3058,9 +3129,9 @@ class STM32Agent:
                             # 用 model_dump() 获取含 Gemini extra_content 的完整 chunk 数据
                             try:
                                 _chunk_dict = chunk.model_dump()
-                                _raw_tcs = (_chunk_dict.get("choices") or [{}])[0].get(
-                                    "delta", {}
-                                ).get("tool_calls") or []
+                                _raw_tcs = (_chunk_dict.get("choices") or [{}])[0].get("delta", {}).get(
+                                    "tool_calls"
+                                ) or []
                             except Exception:
                                 _raw_tcs = []
                             for i, tc in enumerate(delta.tool_calls):
@@ -3127,9 +3198,7 @@ class STM32Agent:
 
                 except Exception as e:
                     if stream_to_console:
-                        CONSOLE.print(
-                            f"\n[red]{_cli_text('流式读取错误', 'Streaming error')}: {e}[/]"
-                        )
+                        CONSOLE.print(f"\n[red]{_cli_text('流式读取错误', 'Streaming error')}: {e}[/]")
                     return f"{_cli_text('流式读取错误', 'Streaming error')}: {e}"
 
                 # 无工具调用 → 结束
@@ -3205,17 +3274,24 @@ class STM32Agent:
                         CONSOLE.print(f"[dim]  🔧 {func_name}[/]", end="")
                     if tool_callback:
                         tool_callback({"phase": "start", "name": func_name, "arguments": args_str})
+                    args: dict[str, Any] = {}
                     try:
                         args = json.loads(args_str) if args_str.strip() else {}
-                        result_obj = dispatch_tool_call(
-                            func_name,
-                            args,
-                            get_context_fn=get_context,
-                        )
+                        blocked_result = self._should_block_redundant_tool_call(func_name, args)
+                        if blocked_result is not None:
+                            result_obj = blocked_result
+                        else:
+                            result_obj = dispatch_tool_call(
+                                func_name,
+                                args,
+                                get_context_fn=get_context,
+                            )
+                        self._record_turn_tool_attempt(func_name, args, result_obj)
                         result_str = json.dumps(result_obj, ensure_ascii=False, indent=2)
                     except Exception as e:
                         result_str = f'{{"error": "{e}"}}'
                         result_obj = {"error": str(e)}
+                        self._record_turn_tool_attempt(func_name, args, result_obj)
                         if tool_callback:
                             tool_callback({"phase": "error", "name": func_name, "error": str(e)})
 
@@ -3233,9 +3309,7 @@ class STM32Agent:
                             }
                         )
                     telegram_log(f"chat tool_exec_finish name={func_name} preview={preview[:80]}")
-                    tool_summaries.append(
-                        self._summarize_tool_result(func_name, result_obj, preview)
-                    )
+                    tool_summaries.append(self._summarize_tool_result(func_name, result_obj, preview))
 
                     tool_results.append(
                         {
@@ -3258,6 +3332,7 @@ class STM32Agent:
             self._current_tool_task_hint = ""
             self._tool_schema_cache = []
             self._tool_schema_signature = None
+            self._reset_turn_tool_state()
             self.refresh_system_prompt()
 
     # ── 内置命令处理 ────────────────────────────────────────
@@ -3391,9 +3466,7 @@ def _print_startup_checks() -> None:
         try:
             import pyocd as _pyocd  # type: ignore
 
-            CONSOLE.print(
-                f"[dim]  pyocd: {_pyocd.__version__} ({_cli_text('可选，调试时备用', 'optional fallback for low-level debug')})[/]"
-            )
+            CONSOLE.print(f"[dim]  pyocd: {_pyocd.__version__} ({_cli_text('可选，调试时备用', 'optional fallback for low-level debug')})[/]")
         except ImportError:
             CONSOLE.print(
                 f"[dim]  pyocd: {_cli_text('未安装（MicroPython 目标不强依赖）', 'not installed (not required for MicroPython targets)')}[/]"
