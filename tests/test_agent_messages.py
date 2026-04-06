@@ -75,7 +75,7 @@ def test_messages_for_api_strips_reasoning_and_provider_thinking_blocks():
 
 
 def test_tokens_estimate_uses_request_payload_and_tools(monkeypatch):
-    """Status-bar token estimate should reflect the next API request, including tools."""
+    """Status-bar token estimate should exclude the fixed first-turn overhead."""
 
     tool_schemas = [
         {
@@ -103,23 +103,36 @@ def test_tokens_estimate_uses_request_payload_and_tools(monkeypatch):
         {"role": "user", "content": "search docs"},
     ]
 
-    expected = estimate_request_tokens(
+    request_total = estimate_request_tokens(
         messages=agent._messages_for_api(),
         tools=tool_schemas,
         tool_choice="auto",
         model="gpt-4o",
         temperature=1,
     )["total_tokens"]
+    base_total = estimate_request_tokens(
+        messages=[{"role": "system", "content": "base prompt"}],
+        tools=tool_schemas,
+        tool_choice="auto",
+        model="gpt-4o",
+        temperature=1,
+    )["total_tokens"]
 
-    assert agent._tokens() == expected
+    assert agent._tokens() == request_total - base_total
 
 
 def test_context_usage_reports_remaining_percent(monkeypatch):
     """Context usage should expose remaining-window percentage for the status bar."""
 
+    def fake_estimate_request_tokens(**kwargs):
+        messages = kwargs.get("messages") or []
+        if len(messages) == 1 and messages[0].get("role") == "system":
+            return {"total_tokens": 12000}
+        return {"total_tokens": 99720}
+
     monkeypatch.setattr(
         "core.agent.estimate_request_tokens",
-        lambda **kwargs: {"total_tokens": 87720},
+        fake_estimate_request_tokens,
     )
     monkeypatch.setattr("core.agent.get_context", lambda: SimpleNamespace(thinking_enabled=False))
     monkeypatch.setattr("core.agent.TOOL_SCHEMAS", [])
@@ -135,11 +148,32 @@ def test_context_usage_reports_remaining_percent(monkeypatch):
 
     usage = agent._context_usage()
 
+    assert usage["base_tokens"] == 12000
+    assert usage["request_tokens"] == 99720
     assert usage["used_tokens"] == 87720
-    assert usage["limit_tokens"] == MAX_CONTEXT_TOKENS
+    assert usage["limit_tokens"] == MAX_CONTEXT_TOKENS - 12000
     assert usage["left_percent"] == int(
-        round(((MAX_CONTEXT_TOKENS - 87720) / MAX_CONTEXT_TOKENS) * 100)
+        round(((usage["limit_tokens"] - 87720) / usage["limit_tokens"]) * 100)
     )
+
+
+def test_context_usage_starts_full_before_first_user_turn(monkeypatch):
+    """The initial status should show a full remaining budget before any chat turns."""
+
+    monkeypatch.setattr("core.agent.estimate_request_tokens", lambda **kwargs: {"total_tokens": 12000})
+    monkeypatch.setattr("core.agent.get_context", lambda: SimpleNamespace(thinking_enabled=False))
+    monkeypatch.setattr("core.agent.TOOL_SCHEMAS", [])
+    monkeypatch.setattr("core.agent.AI_MODEL", "gpt-4o")
+    monkeypatch.setattr("core.agent.AI_TEMPERATURE", 1)
+
+    agent = object.__new__(STM32Agent)
+    agent._pending_system_hint = ""
+    agent.messages = [{"role": "system", "content": "base prompt"}]
+
+    usage = agent._context_usage()
+
+    assert usage["used_tokens"] == 0
+    assert usage["left_percent"] == 100
 
 
 def test_compose_system_prompt_caches_static_and_dynamic_parts(monkeypatch):
@@ -160,9 +194,7 @@ def test_compose_system_prompt_caches_static_and_dynamic_parts(monkeypatch):
     monkeypatch.setattr("core.agent.get_context", lambda: ctx)
     monkeypatch.setattr(
         "core.agent.build_system_prompt",
-        lambda chip, language, hw_connected: build_calls.__setitem__(
-            "system", build_calls["system"] + 1
-        )
+        lambda chip, language, hw_connected: build_calls.__setitem__("system", build_calls["system"] + 1)
         or "static-base",
     )
     monkeypatch.setattr(
@@ -222,10 +254,12 @@ def test_truncate_history_is_idempotent():
         {"role": "tool", "content": "c" * 70000},
     ]
     agent._context_usage = lambda: {
+        "request_tokens": 0,
+        "base_tokens": 12000,
         "used_tokens": 300000 if len(agent.messages) > 3 else 200000,
         "left_tokens": 0,
         "left_percent": 0,
-        "limit_tokens": MAX_CONTEXT_TOKENS,
+        "limit_tokens": MAX_CONTEXT_TOKENS - 12000,
     }
 
     agent._truncate_history()
