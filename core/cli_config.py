@@ -90,12 +90,14 @@ def configure_ai_cli(
     else:
         default_base_urls = {
             "openai": cur_url if cur_style == "openai" and cur_url else "https://api.openai.com/v1",
-            "anthropic": cur_url
-            if cur_style == "anthropic" and cur_url
-            else "https://api.anthropic.com/v1",
-            "gemini": cur_url
-            if cur_style == "gemini" and cur_url
-            else "https://generativelanguage.googleapis.com/v1beta",
+            "anthropic": (
+                cur_url if cur_style == "anthropic" and cur_url else "https://api.anthropic.com/v1"
+            ),
+            "gemini": (
+                cur_url
+                if cur_style == "gemini" and cur_url
+                else "https://generativelanguage.googleapis.com/v1beta"
+            ),
         }
         try:
             base_hint = default_base_urls.get(api_style, cur_url or "https://api.openai.com/v1")

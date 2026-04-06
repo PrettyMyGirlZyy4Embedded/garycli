@@ -29,7 +29,9 @@ def read_docx(file_path: str) -> dict:
         return {"error": str(exc)}
 
 
-def replace_docx_text(file_path: str, old_text: str, new_text: str, use_regex: bool = False) -> dict:
+def replace_docx_text(
+    file_path: str, old_text: str, new_text: str, use_regex: bool = False
+) -> dict:
     """替换 Word 文档中的文本（支持正则）。"""
 
     docx_mod = _get_docx_module()

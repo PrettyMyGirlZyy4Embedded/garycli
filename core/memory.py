@@ -253,7 +253,10 @@ def gary_delete_member_memory(
             }
 
         if max_matches > 0 and len(matched) > max_matches:
-            titles = [entry.splitlines()[0].removeprefix("### ").strip() for entry in matched[:max_matches]]
+            titles = [
+                entry.splitlines()[0].removeprefix("### ").strip()
+                for entry in matched[:max_matches]
+            ]
             return {
                 "success": False,
                 "path": str(path),
