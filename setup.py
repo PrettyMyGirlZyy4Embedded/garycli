@@ -486,7 +486,12 @@ _AI_PRESETS = [
         "gemini-2.5-flash",
         "gemini",
     ),
-    ("通义千问 (阿里云)", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus", "openai"),
+    (
+        "通义千问 (阿里云)",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "qwen-plus",
+        "openai",
+    ),
     ("智谱 GLM", "https://open.bigmodel.cn/api/paas/v4/", "glm-4-flash", "openai"),
     ("Ollama (本地无需Key)", "http://127.0.0.1:11434/v1", "qwen2.5-coder:14b", "openai"),
     ("自定义 / Other", "", "", ""),
@@ -662,7 +667,11 @@ def configure_ai(auto: bool):
     default_model = (
         preset_model
         if preset_model
-        else (current_model_for_style if current_model_for_style else default_models.get(api_style, "gpt-4o"))
+        else (
+            current_model_for_style
+            if current_model_for_style
+            else default_models.get(api_style, "gpt-4o")
+        )
     )
     hint = f" [{_c('36', default_model)}]"
 
@@ -1331,7 +1340,9 @@ def _ensure_windows_docker_desktop(auto: bool, *, explicit: bool = False) -> Opt
     if not _install_windows_wsl_distribution():
         return None
 
-    if not (auto or explicit or ask("未找到 Docker Desktop，是否现在自动安装并启动？", default="y")):
+    if not (
+        auto or explicit or ask("未找到 Docker Desktop，是否现在自动安装并启动？", default="y")
+    ):
         info("已跳过 Docker Desktop 自动安装")
         return None
 
@@ -1353,7 +1364,9 @@ def _ensure_windows_docker_desktop(auto: bool, *, explicit: bool = False) -> Opt
         install_cmd = [choco, "install", "docker-desktop", "-y"]
     else:
         warn("未找到 winget / choco，无法自动安装 Docker Desktop")
-        info("请先手动安装 Docker Desktop: https://docs.docker.com/desktop/setup/install/windows-install/")
+        info(
+            "请先手动安装 Docker Desktop: https://docs.docker.com/desktop/setup/install/windows-install/"
+        )
         return None
 
     result = _run(install_cmd, capture=False, timeout=None)
@@ -1620,11 +1633,17 @@ def setup_local_searxng(auto: bool, *, explicit: bool = False):
         else:
             warn("未找到 docker / podman，容器一键安装不可用")
             if IS_WIN:
-                info("Windows 上可重试：python setup.py --searxng，脚本会继续尝试安装 Docker Desktop")
+                info(
+                    "Windows 上可重试：python setup.py --searxng，脚本会继续尝试安装 Docker Desktop"
+                )
                 info("若 Docker Desktop 已安装，请先完成首次启动初始化，再重新执行当前命令")
                 return
             info("可改用官方原生安装：python setup.py --searxng-native")
-            if not auto and not explicit and ask("改用官方原生方式安装本地 SearXNG（需要 git + sudo）？", default="y"):
+            if (
+                not auto
+                and not explicit
+                and ask("改用官方原生方式安装本地 SearXNG（需要 git + sudo）？", default="y")
+            ):
                 setup_native_searxng(auto=True, explicit=True)
             return
 
@@ -2156,7 +2175,9 @@ def _install_gary_unix(auto: bool):
 def _install_gary_win(auto: bool):
     install_dir = _resolve_win_install_dir()
     gary_bat = install_dir / "gary.bat"
-    expected_content = _GARY_BAT.format(agent_script=str(AGENT_SCRIPT), python=_active_python_path())
+    expected_content = _GARY_BAT.format(
+        agent_script=str(AGENT_SCRIPT), python=_active_python_path()
+    )
 
     if gary_bat.exists():
         existing = gary_bat.read_text(encoding="utf-8", errors="ignore")
