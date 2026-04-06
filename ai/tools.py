@@ -409,7 +409,10 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "code": {"type": "string", "description": "主源码内容（STM32 为 main.c，MicroPython 目标为 main.py）"},
+                    "code": {
+                        "type": "string",
+                        "description": "主源码内容（STM32 为 main.c，MicroPython 目标为 main.py）",
+                    },
                     "request": {"type": "string", "description": "项目描述（作为目录名）"},
                 },
                 "required": ["code"],
@@ -575,7 +578,10 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "code": {"type": "string", "description": "完整的 main.py 代码"},
-                    "chip": {"type": "string", "description": "可选：目标板名称，如 ESP32-S3、ESP32-C3、ESP8266、NodeMCU"},
+                    "chip": {
+                        "type": "string",
+                        "description": "可选：目标板名称，如 ESP32-S3、ESP32-C3、ESP8266、NodeMCU",
+                    },
                 },
                 "required": ["code"],
             },
@@ -670,7 +676,10 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "code": {"type": "string", "description": "完整的 main.py 代码"},
-                    "chip": {"type": "string", "description": "可选：目标板名称，如 CANMV_K230 或 CANMV_K230D"},
+                    "chip": {
+                        "type": "string",
+                        "description": "可选：目标板名称，如 CANMV_K230 或 CANMV_K230D",
+                    },
                 },
                 "required": ["code"],
             },
@@ -718,7 +727,10 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "设备目录路径，默认 .（CanMV 默认会转到 /sdcard）"},
+                    "path": {
+                        "type": "string",
+                        "description": "设备目录路径，默认 .（CanMV 默认会转到 /sdcard）",
+                    },
                     "port": {"type": "string", "description": "可选：串口设备路径"},
                     "baud": {"type": "integer", "description": "串口波特率，默认 115200"},
                 },
@@ -916,7 +928,10 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "description": "要打开的 URL"},
-                    "max_chars": {"type": "integer", "description": "正文最大返回字符数，默认 8000"},
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "正文最大返回字符数，默认 8000",
+                    },
                 },
                 "required": ["url"],
             },
@@ -946,7 +961,10 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "query": {"type": "string", "description": "搜索关键词"},
                     "index": {"type": "integer", "description": "搜索结果索引，从 0 开始，默认 0"},
-                    "max_chars": {"type": "integer", "description": "正文最大返回字符数，默认 8000"},
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "正文最大返回字符数，默认 8000",
+                    },
                 },
                 "required": ["query"],
             },
