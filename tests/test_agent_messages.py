@@ -137,7 +137,9 @@ def test_context_usage_reports_remaining_percent(monkeypatch):
 
     assert usage["used_tokens"] == 87720
     assert usage["limit_tokens"] == MAX_CONTEXT_TOKENS
-    assert usage["left_percent"] == int(round(((MAX_CONTEXT_TOKENS - 87720) / MAX_CONTEXT_TOKENS) * 100))
+    assert usage["left_percent"] == int(
+        round(((MAX_CONTEXT_TOKENS - 87720) / MAX_CONTEXT_TOKENS) * 100)
+    )
 
 
 def test_compose_system_prompt_caches_static_and_dynamic_parts(monkeypatch):
@@ -158,7 +160,9 @@ def test_compose_system_prompt_caches_static_and_dynamic_parts(monkeypatch):
     monkeypatch.setattr("core.agent.get_context", lambda: ctx)
     monkeypatch.setattr(
         "core.agent.build_system_prompt",
-        lambda chip, language, hw_connected: build_calls.__setitem__("system", build_calls["system"] + 1)
+        lambda chip, language, hw_connected: build_calls.__setitem__(
+            "system", build_calls["system"] + 1
+        )
         or "static-base",
     )
     monkeypatch.setattr(
