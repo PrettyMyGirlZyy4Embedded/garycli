@@ -23,12 +23,7 @@ from ai.client import (
     reload_ai_config,
     stream_chat,
 )
-from ai.tools import (
-    TOOL_SCHEMAS,
-    bind_tool_implementations,
-    dispatch_tool_call,
-    select_tool_schemas,
-)
+from ai.tools import TOOL_SCHEMAS, bind_tool_implementations, dispatch_tool_call, select_tool_schemas
 from core.cli_config import configure_ai_cli as _configure_ai_cli_impl
 from core.docx_tools import (
     append_docx_content,
@@ -726,9 +721,7 @@ def canmv_soft_reset(port: str = None, baud: int = None) -> dict:
     )
 
 
-def _micropython_connect_for_target(
-    chip: str, port: str | None = None, baud: int | None = None
-) -> dict:
+def _micropython_connect_for_target(chip: str, port: str | None = None, baud: int | None = None) -> dict:
     platform = detect_target_platform(chip)
     if platform == "rp2040":
         return rp2040_connect(chip, port=port, baud=baud)
@@ -988,9 +981,7 @@ def stm32_compile_rtos(code: str, chip: str = None) -> dict:
     target_chip = _current_target(chip)
     ctx.chip = target_chip
     if is_micropython_target(target_chip):
-        return _micropython_not_supported(
-            "stm32_compile_rtos", "请改用对应的 MicroPython compile 或 auto_sync_cycle 工具"
-        )
+        return _micropython_not_supported("stm32_compile_rtos", "请改用对应的 MicroPython compile 或 auto_sync_cycle 工具")
     compiler = _get_compiler()
     if chip:
         compiler.set_chip(target_chip)
@@ -1045,9 +1036,7 @@ def stm32_recompile(mode: str = "auto") -> dict:
     code = source_path.read_text(encoding="utf-8")
     if source_path.suffix == ".py" or is_micropython_target(ctx.chip):
         if mode == "rtos":
-            return _micropython_not_supported(
-                "stm32_recompile(mode='rtos')", "MicroPython 目标不支持 FreeRTOS 编译"
-            )
+            return _micropython_not_supported("stm32_recompile(mode='rtos')", "MicroPython 目标不支持 FreeRTOS 编译")
         target_chip = ctx.chip if is_micropython_target(ctx.chip) else "ESP32"
         return _micropython_compile_for_target(code, target_chip)
     if mode == "auto":
@@ -1267,9 +1256,7 @@ def stm32_rtos_check_code(code: str) -> dict:
     检查 SysTick 冲突、HAL_Delay 陷阱、缺少 hook 函数、栈大小、ISR 安全等。
     """
     if is_micropython_target(_current_target()):
-        return _micropython_not_supported(
-            "stm32_rtos_check_code", "MicroPython 目标不使用 FreeRTOS C 工程"
-        )
+        return _micropython_not_supported("stm32_rtos_check_code", "MicroPython 目标不使用 FreeRTOS C 工程")
     import re
 
     errors = []
@@ -1417,9 +1404,7 @@ def stm32_rtos_task_stats() -> dict:
     需要先编译（有 ELF 文件）并连接硬件。
     """
     if is_micropython_target(_current_target()):
-        return _micropython_not_supported(
-            "stm32_rtos_task_stats", "MicroPython 目标没有这套 FreeRTOS 任务统计接口"
-        )
+        return _micropython_not_supported("stm32_rtos_task_stats", "MicroPython 目标没有这套 FreeRTOS 任务统计接口")
     if not get_context().hw_connected:
         return {"success": False, "message": "硬件未连接"}
 
@@ -2398,6 +2383,8 @@ class STM32Agent:
         self.thinking_log: List[Dict[str, Any]] = []
         self._static_prompt_cache = ""
         self._static_prompt_signature: tuple[Any, ...] | None = None
+        self._skill_prompt_cache = ""
+        self._skill_prompt_signature: tuple[Any, ...] | None = None
         self._dynamic_prompt_cache = ""
         self._dynamic_prompt_signature: tuple[Any, ...] | None = None
         self._system_prompt_cache = ""
@@ -2422,12 +2409,10 @@ class STM32Agent:
         """Compose the runtime system prompt from cached static/dynamic fragments."""
 
         ctx = get_context()
-        skill_prompt = _get_manager().get_all_prompt_additions() or ""
         static_signature = (
             ctx.chip,
             ctx.cli_language,
             bool(ctx.hw_connected),
-            skill_prompt,
         )
         if static_signature != self._static_prompt_signature:
             prompt = build_system_prompt(ctx.chip, ctx.cli_language, ctx.hw_connected)
@@ -2438,20 +2423,25 @@ class STM32Agent:
                 )
                 if debug_prompt:
                     prompt += "\n\n" + debug_prompt
-            if skill_prompt:
-                prompt += "\n" + skill_prompt.lstrip("\n")
             self._static_prompt_cache = prompt
             self._static_prompt_signature = static_signature
 
+        skill_prompt = self._current_skill_prompt()
         member_prompt, member_hash = get_member_prompt_section_state(ctx.chip)
         dynamic_signature = (ctx.chip, member_hash)
         if dynamic_signature != self._dynamic_prompt_signature:
             self._dynamic_prompt_cache = member_prompt
             self._dynamic_prompt_signature = dynamic_signature
 
-        system_signature = (self._static_prompt_signature, self._dynamic_prompt_signature)
+        system_signature = (
+            self._static_prompt_signature,
+            self._skill_prompt_signature,
+            self._dynamic_prompt_signature,
+        )
         if system_signature != self._system_prompt_signature:
             prompt = self._static_prompt_cache
+            if skill_prompt:
+                prompt += "\n" + skill_prompt.lstrip("\n")
             if self._dynamic_prompt_cache:
                 prompt += "\n\n" + self._dynamic_prompt_cache
             self._system_prompt_cache = prompt
@@ -2533,6 +2523,39 @@ class STM32Agent:
             self._tool_schema_signature = signature
         return self._tool_schema_cache
 
+    def _current_skill_prompt(self) -> str:
+        """Return prompt additions only for skills relevant to the current tool subset."""
+
+        if not hasattr(self, "_skill_prompt_cache") or self._skill_prompt_cache is None:
+            self._skill_prompt_cache = ""
+        if not hasattr(self, "_skill_prompt_signature"):
+            self._skill_prompt_signature = None
+        if not hasattr(self, "_tool_schema_cache") or self._tool_schema_cache is None:
+            self._tool_schema_cache = []
+
+        active_tool_names = tuple(
+            sorted(
+                {
+                    str(schema.get("function", {}).get("name") or "").strip()
+                    for schema in self._tool_schema_cache
+                    if str(schema.get("function", {}).get("name") or "").strip()
+                }
+            )
+        )
+        manager = _get_manager()
+        get_prompt_additions = getattr(manager, "get_prompt_additions_for_tools", None)
+        skill_prompt = ""
+        if callable(get_prompt_additions):
+            try:
+                skill_prompt = str(get_prompt_additions(set(active_tool_names)) or "")
+            except Exception:
+                skill_prompt = ""
+        signature = (active_tool_names, skill_prompt)
+        if signature != self._skill_prompt_signature:
+            self._skill_prompt_cache = skill_prompt
+            self._skill_prompt_signature = signature
+        return self._skill_prompt_cache
+
     def _base_context_tokens(self) -> int:
         """Estimate the fixed per-request overhead before the first user turn."""
 
@@ -2540,9 +2563,7 @@ class STM32Agent:
         system_content = ""
         if self.messages and self.messages[0].get("role") == "system":
             system_content = str(self.messages[0].get("content", "") or "")
-        baseline_messages = (
-            [{"role": "system", "content": system_content}] if system_content else []
-        )
+        baseline_messages = [{"role": "system", "content": system_content}] if system_content else []
         tool_schemas = self._current_tool_schemas()
         estimate = estimate_request_tokens(
             messages=baseline_messages,
@@ -2724,7 +2745,7 @@ class STM32Agent:
                     continue
 
                 pending = self._partial_think_tag_suffix(source, (close_tag,))
-                chunk = source[: -len(pending)] if pending else source
+                chunk = source[:-len(pending)] if pending else source
                 if chunk:
                     segments.append(("think", chunk))
                 state["pending"] = pending
@@ -2747,7 +2768,7 @@ class STM32Agent:
                 continue
 
             pending = self._partial_think_tag_suffix(source, (open_tag, close_tag))
-            chunk = source[: -len(pending)] if pending else source
+            chunk = source[:-len(pending)] if pending else source
             if chunk:
                 segments.append(("content", chunk))
             state["pending"] = pending
@@ -2766,9 +2787,7 @@ class STM32Agent:
         kind = "think" if state.get("inside_think", False) else "content"
         return [(kind, pending)]
 
-    def _request_final_reply_after_tools(
-        self, stream_to_console: bool = True
-    ) -> dict[str, Any] | None:
+    def _request_final_reply_after_tools(self, stream_to_console: bool = True) -> dict[str, Any] | None:
         """部分模型在工具执行后会停在空回复，这里补一次只求最终答复的请求。"""
         if stream_to_console:
             CONSOLE.print(
@@ -2933,6 +2952,7 @@ class STM32Agent:
         tool_callback=None,
     ) -> str:
         self._current_tool_schemas(user_input)
+        self.refresh_system_prompt()
         self._prepare_web_research_hint(user_input)
         self.messages.append({"role": "user", "content": user_input})
         self._truncate_history()
@@ -2988,9 +3008,7 @@ class STM32Agent:
 
                         # 文本内容
                         if delta.content:
-                            for kind, piece in self._extract_think_segments(
-                                delta.content, think_tag_state
-                            ):
+                            for kind, piece in self._extract_think_segments(delta.content, think_tag_state):
                                 if not piece:
                                     continue
                                 if kind == "think":
@@ -3019,9 +3037,9 @@ class STM32Agent:
                             # 用 model_dump() 获取含 Gemini extra_content 的完整 chunk 数据
                             try:
                                 _chunk_dict = chunk.model_dump()
-                                _raw_tcs = (_chunk_dict.get("choices") or [{}])[0].get(
-                                    "delta", {}
-                                ).get("tool_calls") or []
+                                _raw_tcs = (_chunk_dict.get("choices") or [{}])[0].get("delta", {}).get(
+                                    "tool_calls"
+                                ) or []
                             except Exception:
                                 _raw_tcs = []
                             for i, tc in enumerate(delta.tool_calls):
@@ -3088,9 +3106,7 @@ class STM32Agent:
 
                 except Exception as e:
                     if stream_to_console:
-                        CONSOLE.print(
-                            f"\n[red]{_cli_text('流式读取错误', 'Streaming error')}: {e}[/]"
-                        )
+                        CONSOLE.print(f"\n[red]{_cli_text('流式读取错误', 'Streaming error')}: {e}[/]")
                     return f"{_cli_text('流式读取错误', 'Streaming error')}: {e}"
 
                 # 无工具调用 → 结束
@@ -3194,9 +3210,7 @@ class STM32Agent:
                             }
                         )
                     telegram_log(f"chat tool_exec_finish name={func_name} preview={preview[:80]}")
-                    tool_summaries.append(
-                        self._summarize_tool_result(func_name, result_obj, preview)
-                    )
+                    tool_summaries.append(self._summarize_tool_result(func_name, result_obj, preview))
 
                     tool_results.append(
                         {
@@ -3217,6 +3231,9 @@ class STM32Agent:
             return "\n\n".join(part for part in reply_parts if part).strip()
         finally:
             self._current_tool_task_hint = ""
+            self._tool_schema_cache = []
+            self._tool_schema_signature = None
+            self.refresh_system_prompt()
 
     # ── 内置命令处理 ────────────────────────────────────────
     def handle_builtin(self, cmd: str) -> bool:
@@ -3349,9 +3366,7 @@ def _print_startup_checks() -> None:
         try:
             import pyocd as _pyocd  # type: ignore
 
-            CONSOLE.print(
-                f"[dim]  pyocd: {_pyocd.__version__} ({_cli_text('可选，调试时备用', 'optional fallback for low-level debug')})[/]"
-            )
+            CONSOLE.print(f"[dim]  pyocd: {_pyocd.__version__} ({_cli_text('可选，调试时备用', 'optional fallback for low-level debug')})[/]")
         except ImportError:
             CONSOLE.print(
                 f"[dim]  pyocd: {_cli_text('未安装（MicroPython 目标不强依赖）', 'not installed (not required for MicroPython targets)')}[/]"
