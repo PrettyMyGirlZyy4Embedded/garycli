@@ -421,7 +421,12 @@ _AI_PRESETS = [
         "gemini-2.5-flash",
         "gemini",
     ),
-    ("通义千问 (阿里云)", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus", "openai"),
+    (
+        "通义千问 (阿里云)",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "qwen-plus",
+        "openai",
+    ),
     ("智谱 GLM", "https://open.bigmodel.cn/api/paas/v4/", "glm-4-flash", "openai"),
     ("Ollama (本地无需Key)", "http://127.0.0.1:11434/v1", "qwen2.5-coder:14b", "openai"),
     ("自定义 / Other", "", "", ""),
@@ -597,7 +602,11 @@ def configure_ai(auto: bool):
     default_model = (
         preset_model
         if preset_model
-        else (current_model_for_style if current_model_for_style else default_models.get(api_style, "gpt-4o"))
+        else (
+            current_model_for_style
+            if current_model_for_style
+            else default_models.get(api_style, "gpt-4o")
+        )
     )
     hint = f" [{_c('36', default_model)}]"
 
@@ -1123,7 +1132,9 @@ def setup_local_searxng(auto: bool):
         info("如需联网搜索，请先安装 Docker / Podman 后执行：python setup.py --searxng")
         return
 
-    if not (auto or ask("安装并启动本地 SearXNG（browser_search / web_search 需要）？", default="n")):
+    if not (
+        auto or ask("安装并启动本地 SearXNG（browser_search / web_search 需要）？", default="n")
+    ):
         info("已跳过，本地网页搜索工具将在 SearXNG 启动后可用")
         return
 
