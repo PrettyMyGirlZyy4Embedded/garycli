@@ -160,7 +160,9 @@ def test_context_usage_reports_remaining_percent(monkeypatch):
 def test_context_usage_starts_full_before_first_user_turn(monkeypatch):
     """The initial status should show a full remaining budget before any chat turns."""
 
-    monkeypatch.setattr("core.agent.estimate_request_tokens", lambda **kwargs: {"total_tokens": 12000})
+    monkeypatch.setattr(
+        "core.agent.estimate_request_tokens", lambda **kwargs: {"total_tokens": 12000}
+    )
     monkeypatch.setattr("core.agent.get_context", lambda: SimpleNamespace(thinking_enabled=False))
     monkeypatch.setattr("core.agent.TOOL_SCHEMAS", [])
     monkeypatch.setattr("core.agent.AI_MODEL", "gpt-4o")
@@ -194,7 +196,9 @@ def test_compose_system_prompt_caches_static_and_dynamic_parts(monkeypatch):
     monkeypatch.setattr("core.agent.get_context", lambda: ctx)
     monkeypatch.setattr(
         "core.agent.build_system_prompt",
-        lambda chip, language, hw_connected: build_calls.__setitem__("system", build_calls["system"] + 1)
+        lambda chip, language, hw_connected: build_calls.__setitem__(
+            "system", build_calls["system"] + 1
+        )
         or "static-base",
     )
     monkeypatch.setattr(
