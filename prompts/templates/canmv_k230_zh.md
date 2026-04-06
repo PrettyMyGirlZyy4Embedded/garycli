@@ -15,7 +15,8 @@
 3. 生成完整 `main.py`
 4. 直接调用 `canmv_auto_sync_cycle(code=..., request=...)`
 5. 根据结果处理：
-   - `success: true`：向用户说明是否看到 `Gary:BOOT`、是否捕获到串口输出
+   - `success: true`：只在确实看到 `Gary:RUN_START`、`Traceback` 或明确的运行期串口输出时，才说明程序已启动
+   - `success: false` 且 `runtime_unverified=true`：明确告诉用户“代码已写入，但当前没有证据表明 gary_run.py 已运行”
    - `success: false` 且有 `uart_output`：优先按 `Traceback` 和串口日志修复
    - `success: false` 且是语法错误：直接按行号修复
    - 只完成语法检查、未检测到串口：明确告诉用户当前还没做运行时验证
@@ -88,9 +89,12 @@
   - REPL 串口未连接
   - `Gary:BOOT` 没有尽早打印
   - 程序在导入、外设初始化或资源加载阶段阻塞
+- 空的 `uart_output` 不等于“程序已经在运行中”；没有串口证据时，只能说“运行未确认”。
+- 若只看到 `boot.py` 的 `Gary:BOOT`，但没有 `Gary:RUN_START`、`Gary:RUN_ERROR`、`Gary:RUN_DONE` 或用户自己的串口输出，也不能声称 `gary_run.py` 已经运行。
 - 若工具提示 `MicroPython raw REPL 响应异常`、`进入 raw REPL 失败` 或 `raw_repl_failure=true`，优先怀疑板子还在执行上一次的 `gary_run.py` / 用户脚本：
   例如摄像头采集 + 显示的 `while True` 死循环、无延时视频循环、阻塞式媒体初始化。
 - 这种情况下先建议调用 `canmv_soft_reset` 做软件复位；若仍无响应，再按 `RST` 或重新插拔 USB。随后修改代码，让 `Gary:BOOT` 更早打印，并在长循环中加入 `time.sleep_ms(5)` 一类的短延时。
+- 同一轮里，`canmv_soft_reset` 最多尝试 1 次；如果复位后的 `canmv_flash` / `canmv_auto_sync_cycle` 仍失败，就停止继续 `canmv_connect` / `canmv_list_files` / `canmv_flash` / `canmv_auto_sync_cycle` 反复打转，直接向用户说明当前需要手动复位、重插 USB，或先修代码。
 
 ### 资源与外设问题
 - 涉及文件时，优先确认 `/sdcard` 上的目标文件是否存在

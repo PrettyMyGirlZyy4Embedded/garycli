@@ -33,11 +33,14 @@ _MICROPYTHON_COMPILE_PROMPT = """## MicroPython 语法诊断
 _MICROPYTHON_RUNTIME_PROMPT = """## MicroPython 运行诊断
 - 优先阅读串口里的 `Traceback`，按最后一层报错直接修复。
 - 若没有任何输出，先确认 USB 串口连接，再确认 `print("Gary:BOOT")` 是否放在文件顶部附近。
+- 空的 `uart_output` 不等于“程序已经在运行中”；没有串口证据时，只能说“运行未确认”。
+- 若只看到 `boot.py` 打印的 `Gary:BOOT`，但没有 `Gary:RUN_START`、`Gary:RUN_ERROR`、`Gary:RUN_DONE` 或用户日志，也不能确认 `gary_run.py` 已运行。
 - 涉及 I2C / OLED / 传感器时，先 `scan()` 或先探测，再进入主循环。
 - 若工具返回 `MicroPython raw REPL 响应异常`、`进入 raw REPL 失败` 或 `raw_repl_failure=true`，优先怀疑当前板子还在执行上一次部署的 `gary_run.py` / 用户脚本：
   例如无延时的 `while True` 死循环、摄像头/显示循环、阻塞式初始化、或启动阶段长时间同步调用。
 - 遇到 raw REPL 失败时，不要把它轻描淡写成“正常现象”或“不是工具链问题”；要把它当成当前程序导致的可修复调试问题来处理。
 - 这类失败时，优先建议用户先调用板卡对应的 `*_soft_reset` 工具做软件复位；若仍无响应，再按 `RST` / 重新插拔 USB。
+- 同一轮里，`*_soft_reset` 最多做 1 次；复位后的 `flash` / `auto_sync_cycle` 若仍失败，就停止继续 `connect` / `list_files` / `flash` / `auto_sync_cycle` 打转，直接向用户说明需要手动复位或先改代码。
 - 下一版代码要尽早 `print("Gary:BOOT")`，并确保每个 `while` 循环里都带 `time.sleep_ms(5)` 一类的短延时。
 - 若 `Traceback` 指向陌生模块、属性、方法、错误码或板级专有接口，先联网搜索官方文档 / 示例验证，再下结论。
 - 在你准备说“这个平台没有某模块 / 不支持某 API”之前，先联网查证，不要凭记忆断言。
@@ -87,9 +90,7 @@ def get_debug_prompt(error_type: str, context: dict[str, Any]) -> str:
             prompt = _MICROPYTHON_COMPILE_PROMPT
         else:
             prompt = _MICROPYTHON_RUNTIME_PROMPT
-            prompt += (
-                f"\n- 当前板卡优先使用 `{_soft_reset_tool_name(context.get('chip'))}` 做软件复位。"
-            )
+            prompt += f"\n- 当前板卡优先使用 `{_soft_reset_tool_name(context.get('chip'))}` 做软件复位。"
     elif normalized in {"hardfault", "fault", "crash"}:
         prompt = _load_template("debug_hardfault.md")
     elif normalized in {"i2c", "i2c_failure", "sensor_i2c"}:
