@@ -90,7 +90,9 @@ def get_debug_prompt(error_type: str, context: dict[str, Any]) -> str:
             prompt = _MICROPYTHON_COMPILE_PROMPT
         else:
             prompt = _MICROPYTHON_RUNTIME_PROMPT
-            prompt += f"\n- 当前板卡优先使用 `{_soft_reset_tool_name(context.get('chip'))}` 做软件复位。"
+            prompt += (
+                f"\n- 当前板卡优先使用 `{_soft_reset_tool_name(context.get('chip'))}` 做软件复位。"
+            )
     elif normalized in {"hardfault", "fault", "crash"}:
         prompt = _load_template("debug_hardfault.md")
     elif normalized in {"i2c", "i2c_failure", "sensor_i2c"}:
