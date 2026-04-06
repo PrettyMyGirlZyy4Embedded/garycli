@@ -10,7 +10,6 @@
 [![Boards](https://img.shields.io/badge/Boards-STM32%20%7C%20RP2040%20%7C%20ESP32%20%7C%20ESP8266-blue.svg)](#supported-chips)
 [![Website](https://img.shields.io/badge/Website-garycli.com-success)](https://www.garycli.com)
 [![Tests](https://github.com/PrettyMyGirlZyy4Embedded/garycli/actions/workflows/test.yml/badge.svg)](https://github.com/PrettyMyGirlZyy4Embedded/garycli/actions)
-[![Lint](https://github.com/PrettyMyGirlZyy4Embedded/garycli/actions/workflows/lint.yml/badge.svg)](https://github.com/PrettyMyGirlZyy4Embedded/garycli/actions)
 
 <br>
 
@@ -757,7 +756,15 @@ newgrp dialout
 
 # 4. 提交 PR
 ```
+## Star History
 
+<a href="https://www.star-history.com/?repos=garycli%2Fgarycli&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=garycli/garycli&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=garycli/garycli&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=garycli/garycli&type=date&legend=top-left" />
+ </picture>
+</a>
 ---
 
 ## 📜 协议
