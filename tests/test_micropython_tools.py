@@ -181,7 +181,8 @@ def test_micropython_flash_syncs_explicit_file_before_upload(tmp_path, monkeypat
     monkeypatch.setattr(
         "core.micropython_tools.sync_latest_workspace",
         lambda code, chip=None: (
-            sync_calls.append((code, chip or "")) or {
+            sync_calls.append((code, chip or ""))
+            or {
                 "success": True,
                 "path": "workspace/projects/latest_workspace/main.py",
                 "source_file": "main.py",
@@ -224,7 +225,8 @@ def test_micropython_flash_uses_last_code_when_latest_workspace_missing(monkeypa
     monkeypatch.setattr(
         "core.micropython_tools.sync_latest_workspace",
         lambda code, chip=None: (
-            sync_calls.append((code, chip or "")) or {
+            sync_calls.append((code, chip or ""))
+            or {
                 "success": True,
                 "path": "workspace/projects/latest_workspace/main.py",
                 "source_file": "main.py",
@@ -301,7 +303,9 @@ def test_micropython_auto_sync_cycle_explains_raw_repl_failure(monkeypatch):
         "core.micropython_tools.micropython_compile",
         lambda *args, **kwargs: {"success": True, "message": "ok"},
     )
-    monkeypatch.setattr("core.micropython_tools.detect_serial_ports", lambda **kwargs: ["/dev/ttyACM0"])
+    monkeypatch.setattr(
+        "core.micropython_tools.detect_serial_ports", lambda **kwargs: ["/dev/ttyACM0"]
+    )
     monkeypatch.setattr(
         "core.micropython_tools.micropython_flash",
         lambda **kwargs: {
@@ -344,7 +348,9 @@ def test_micropython_auto_sync_cycle_requires_runtime_output(monkeypatch):
         "core.micropython_tools.micropython_compile",
         lambda *args, **kwargs: {"success": True, "message": "ok"},
     )
-    monkeypatch.setattr("core.micropython_tools.detect_serial_ports", lambda **kwargs: ["/dev/ttyACM0"])
+    monkeypatch.setattr(
+        "core.micropython_tools.detect_serial_ports", lambda **kwargs: ["/dev/ttyACM0"]
+    )
     monkeypatch.setattr(
         "core.micropython_tools.micropython_flash",
         lambda **kwargs: {
@@ -370,7 +376,9 @@ def test_micropython_auto_sync_cycle_requires_runtime_output(monkeypatch):
         ctx.debug_attempt = old_attempt
 
 
-def test_micropython_auto_sync_cycle_does_not_treat_bootstrap_only_output_as_runtime_success(monkeypatch):
+def test_micropython_auto_sync_cycle_does_not_treat_bootstrap_only_output_as_runtime_success(
+    monkeypatch,
+):
     """Seeing only the managed boot marker must not be treated as gary_run.py having started."""
 
     ctx = get_context()
@@ -381,7 +389,9 @@ def test_micropython_auto_sync_cycle_does_not_treat_bootstrap_only_output_as_run
         "core.micropython_tools.micropython_compile",
         lambda *args, **kwargs: {"success": True, "message": "ok"},
     )
-    monkeypatch.setattr("core.micropython_tools.detect_serial_ports", lambda **kwargs: ["/dev/ttyACM0"])
+    monkeypatch.setattr(
+        "core.micropython_tools.detect_serial_ports", lambda **kwargs: ["/dev/ttyACM0"]
+    )
     monkeypatch.setattr(
         "core.micropython_tools.micropython_flash",
         lambda **kwargs: {
