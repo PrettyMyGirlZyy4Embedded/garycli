@@ -409,10 +409,7 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "code": {
-                        "type": "string",
-                        "description": "主源码内容（STM32 为 main.c，MicroPython 目标为 main.py）",
-                    },
+                    "code": {"type": "string", "description": "主源码内容（STM32 为 main.c，MicroPython 目标为 main.py）"},
                     "request": {"type": "string", "description": "项目描述（作为目录名）"},
                 },
                 "required": ["code"],
@@ -578,10 +575,7 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "code": {"type": "string", "description": "完整的 main.py 代码"},
-                    "chip": {
-                        "type": "string",
-                        "description": "可选：目标板名称，如 ESP32-S3、ESP32-C3、ESP8266、NodeMCU",
-                    },
+                    "chip": {"type": "string", "description": "可选：目标板名称，如 ESP32-S3、ESP32-C3、ESP8266、NodeMCU"},
                 },
                 "required": ["code"],
             },
@@ -676,10 +670,7 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "code": {"type": "string", "description": "完整的 main.py 代码"},
-                    "chip": {
-                        "type": "string",
-                        "description": "可选：目标板名称，如 CANMV_K230 或 CANMV_K230D",
-                    },
+                    "chip": {"type": "string", "description": "可选：目标板名称，如 CANMV_K230 或 CANMV_K230D"},
                 },
                 "required": ["code"],
             },
@@ -727,10 +718,7 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "设备目录路径，默认 .（CanMV 默认会转到 /sdcard）",
-                    },
+                    "path": {"type": "string", "description": "设备目录路径，默认 .（CanMV 默认会转到 /sdcard）"},
                     "port": {"type": "string", "description": "可选：串口设备路径"},
                     "baud": {"type": "integer", "description": "串口波特率，默认 115200"},
                 },
@@ -908,7 +896,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "browser_search",
-            "description": "首选的网页搜索入口。使用本地 SearXNG 做结构化搜索，返回标题、URL 和摘要。",
+            "description": "首选的网页搜索入口。使用本地 SearXNG 做结构化搜索，返回标题、URL 和摘要。遇到最新信息、官方文档、API、示例、教程、陌生模块或不确定的说法时，优先用它，不要靠记忆猜。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -923,15 +911,12 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "browser_open",
-            "description": "打开网页，返回标题、正文纯文本和页面中的链接列表。适合阅读搜索结果页或文档页。",
+            "description": "打开网页，返回标题、正文纯文本和页面中的链接列表。适合阅读搜索结果页或文档页；在下结论前应至少打开一个结果核对细节。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "description": "要打开的 URL"},
-                    "max_chars": {
-                        "type": "integer",
-                        "description": "正文最大返回字符数，默认 8000",
-                    },
+                    "max_chars": {"type": "integer", "description": "正文最大返回字符数，默认 8000"},
                 },
                 "required": ["url"],
             },
@@ -955,16 +940,13 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "browser_open_result",
-            "description": "推荐的检索第二步。先搜索，再按结果索引直接打开网页。index 从 0 开始。",
+            "description": "推荐的检索第二步。先搜索，再按结果索引直接打开网页。index 从 0 开始。若你不确定某个 API、模块或说法是否正确，搜索后应立即用它打开至少一个结果。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "搜索关键词"},
                     "index": {"type": "integer", "description": "搜索结果索引，从 0 开始，默认 0"},
-                    "max_chars": {
-                        "type": "integer",
-                        "description": "正文最大返回字符数，默认 8000",
-                    },
+                    "max_chars": {"type": "integer", "description": "正文最大返回字符数，默认 8000"},
                 },
                 "required": ["query"],
             },
