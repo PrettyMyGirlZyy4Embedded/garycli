@@ -26,12 +26,7 @@ from hardware.micropython import (
     soft_reset_board,
     sync_text_files,
 )
-from hardware.serial_mon import (
-    SerialMonitor,
-    connect_serial,
-    detect_serial_ports,
-    disconnect_serial,
-)
+from hardware.serial_mon import SerialMonitor, connect_serial, detect_serial_ports, disconnect_serial
 
 
 def _micropython_platform_label(chip: str | None) -> str:
@@ -55,9 +50,7 @@ def _micropython_port_help(chip: str | None) -> str:
     return f"未检测到 {label} 常见 USB 串口，请确认开发板已刷入 MicroPython 且 USB 数据线可传输"
 
 
-def _normalize_raw_repl_error(
-    result: dict[str, Any] | None, chip: str | None
-) -> dict[str, Any] | None:
+def _normalize_raw_repl_error(result: dict[str, Any] | None, chip: str | None) -> dict[str, Any] | None:
     """Rewrite raw-REPL transport failures into a clearer diagnostic payload."""
 
     data = dict(result or {})
@@ -163,14 +156,15 @@ def _build_gary_bootstrap(chip: str | None) -> str:
         "  time.sleep_ms(120)\n"
         " except AttributeError:\n"
         "  time.sleep(0.12)\n"
+        " print('Gary:RUN_START')\n"
         " scope = {'__name__': '__main__', '__file__': RUN_PATH}\n"
         " try:\n"
         "  exec(compile(open(RUN_PATH, 'r').read(), RUN_PATH, 'exec'), scope, scope)\n"
-        " except Exception as exc:\n"
-        "  if sys and hasattr(sys, 'print_exception'):\n"
-        "   sys.print_exception(exc)\n"
-        "  else:\n"
-        "   print(exc)\n"
+        " except Exception:\n"
+        "  print('Gary:RUN_ERROR')\n"
+        "  raise\n"
+        " else:\n"
+        "  print('Gary:RUN_DONE')\n"
     )
 
 
@@ -191,7 +185,8 @@ def _managed_device_files(chip: str | None, code: str) -> tuple[list[tuple[str, 
 def _looks_like_usb_device_port(port: str | None) -> bool:
     text = str(port or "").lower()
     return any(
-        token in text for token in ("ttyacm", "ttyusb", "usbmodem", "usbserial", "/cu.usb", "com")
+        token in text
+        for token in ("ttyacm", "ttyusb", "usbmodem", "usbserial", "/cu.usb", "com")
     )
 
 
@@ -506,11 +501,7 @@ def micropython_flash(
         elif ctx.last_code:
             code = ctx.last_code
         else:
-            return {
-                "success": False,
-                "platform": platform,
-                "message": f"源文件不存在: {source_path}",
-            }
+            return {"success": False, "platform": platform, "message": f"源文件不存在: {source_path}"}
 
     # 烧录前强制同步到 latest_workspace，保证后续运行报错时 AI 有稳定的编辑目标。
     ctx.last_code = code
@@ -565,9 +556,7 @@ def micropython_flash(
 
     reconnect = _reconnect_monitor(resolved_port, baud, console=console)
     boot_output = result.get("boot_output", "")
-    traceback_present = (
-        "Traceback (most recent call last)" in boot_output or "Traceback:" in boot_output
-    )
+    traceback_present = "Traceback (most recent call last)" in boot_output or "Traceback:" in boot_output
     ctx.hw_connected = True
     return {
         "success": True,
@@ -674,13 +663,7 @@ def micropython_auto_sync_cycle(
         record_success_memory=record_success_memory,
         log_error=log_error,
     )
-    steps.append(
-        {
-            "step": "compile",
-            "success": compile_result.get("success", False),
-            "msg": compile_result.get("message", ""),
-        }
-    )
+    steps.append({"step": "compile", "success": compile_result.get("success", False), "msg": compile_result.get("message", "")})
     if not compile_result.get("success"):
         error_message = compile_result.get("message", "MicroPython 检查失败")
         return {
@@ -690,24 +673,16 @@ def micropython_auto_sync_cycle(
             "give_up": False,
             "steps": steps,
             "compile_errors": error_message,
-            "error": (
-                error_message
-                if compile_result.get("error_type") == "while_loop_missing_delay"
-                else "MicroPython 语法错误，请按行号修复"
-            ),
+            "error": error_message
+            if compile_result.get("error_type") == "while_loop_missing_delay"
+            else "MicroPython 语法错误，请按行号修复",
             "platform": platform,
         }
 
     ports = detect_serial_ports(verbose=False)
     if not ports and not getattr(getattr(ctx, "serial", None), "port", None):
         if request:
-            save_project(
-                code,
-                {"bin_path": None, "bin_size": len(code.encode("utf-8"))},
-                request,
-                chip=ctx.chip,
-                console=console,
-            )
+            save_project(code, {"bin_path": None, "bin_size": len(code.encode("utf-8"))}, request, chip=ctx.chip, console=console)
         return {
             "success": True,
             "attempt": attempt,
@@ -717,13 +692,7 @@ def micropython_auto_sync_cycle(
         }
 
     flash_result = micropython_flash(code=code, baud=baud, console=console)
-    steps.append(
-        {
-            "step": "deploy",
-            "success": flash_result.get("success", False),
-            "msg": flash_result.get("message", ""),
-        }
-    )
+    steps.append({"step": "deploy", "success": flash_result.get("success", False), "msg": flash_result.get("message", "")})
     if not flash_result.get("success"):
         raw_repl_error = _normalize_raw_repl_error(flash_result, ctx.chip)
         if raw_repl_error is not None:
