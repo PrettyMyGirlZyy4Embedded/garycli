@@ -15,6 +15,10 @@ def test_build_system_prompt_includes_web_workflow_in_chinese():
     assert "不要擅自切换到公共搜索后端" in prompt
     assert "必须先联网查证" in prompt
     assert "不要靠记忆硬猜" in prompt
+    assert "你的名字是 `Gary`" in prompt
+    assert "产品全名是 `GaryCLI`" in prompt
+    assert "你是 `Gary`，也就是 `GaryCLI` 的助手" in prompt
+    assert "Gary Dev Agent" not in prompt
 
 
 def test_build_system_prompt_includes_web_workflow_in_english():
@@ -27,6 +31,10 @@ def test_build_system_prompt_includes_web_workflow_in_english():
     assert "Do not silently switch to public search backends" in prompt
     assert "You must search first" in prompt
     assert "default to web verification instead of guessing from memory" in prompt
+    assert "Your name is `Gary`." in prompt
+    assert "The product name is `GaryCLI`." in prompt
+    assert "you are `Gary`, the assistant for `GaryCLI`" in prompt
+    assert "Gary Dev Agent" not in prompt
 
 
 def test_should_force_web_research_matches_latest_and_docs_queries():

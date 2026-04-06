@@ -56,6 +56,24 @@ def test_searxng_image_defaults_to_docker_hub(monkeypatch):
     assert module._searxng_image() == "searxng/searxng:latest"
 
 
+def test_searxng_git_url_defaults_to_official_repo(monkeypatch):
+    """Native install should default to the official SearXNG repository."""
+
+    module = _load_setup_module(monkeypatch)
+    monkeypatch.delenv("GARY_SEARXNG_GIT_URL", raising=False)
+
+    assert module._searxng_git_url() == "https://github.com/searxng/searxng.git"
+
+
+def test_searxng_wsl_distro_defaults_to_ubuntu(monkeypatch):
+    """Windows WSL install should default to Ubuntu unless overridden."""
+
+    module = _load_setup_module(monkeypatch)
+    monkeypatch.delenv("GARY_SEARXNG_WSL_DISTRO", raising=False)
+
+    assert module._searxng_wsl_distro() == "Ubuntu"
+
+
 def test_searxng_healthcheck_uses_homepage_not_json(monkeypatch):
     """Healthcheck should accept HTML-only SearXNG defaults."""
 
@@ -188,6 +206,135 @@ def test_setup_local_searxng_is_skipped_in_default_flow(monkeypatch):
     assert asked["value"] is False
 
 
+def test_setup_local_searxng_offers_native_fallback_without_container_runtime(monkeypatch):
+    """Interactive setup should offer the native path when Docker/Podman is unavailable."""
+
+    module = _load_setup_module(monkeypatch)
+    called = {"value": False, "auto": None, "explicit": None}
+
+    monkeypatch.setattr(module, "_searxng_healthcheck", lambda base_url=None: False)
+    monkeypatch.setattr(module, "_container_runtime", lambda: None)
+    monkeypatch.setattr(module, "ask", lambda *args, **kwargs: True)
+
+    def _mark_called(*args, **kwargs):
+        called["value"] = True
+        called["auto"] = kwargs.get("auto")
+        called["explicit"] = kwargs.get("explicit")
+
+    monkeypatch.setattr(module, "setup_native_searxng", _mark_called)
+
+    module.setup_local_searxng(auto=False, explicit=False)
+
+    assert called["value"] is True
+    assert called["auto"] is True
+    assert called["explicit"] is True
+
+
+def test_setup_native_searxng_runs_official_script(monkeypatch, tmp_path):
+    """Native install should clone the repo and invoke the official install script."""
+
+    module = _load_setup_module(monkeypatch)
+    repo_dir = tmp_path / "services" / "searxng" / "native-src"
+    commands = []
+    health = iter([False, True])
+
+    monkeypatch.setattr(module, "IS_LINUX", True)
+    monkeypatch.setattr(module, "SEARXNG_DIR", tmp_path / "services" / "searxng")
+    monkeypatch.setattr(module, "SERVICES_DIR", tmp_path / "services")
+    monkeypatch.setattr(module, "SEARXNG_NATIVE_REPO_DIR", repo_dir)
+    monkeypatch.setattr(
+        module,
+        "_which",
+        lambda name: f"/usr/bin/{name}" if name in {"git", "sudo"} else None,
+    )
+    monkeypatch.setattr(module, "_searxng_healthcheck", lambda base_url=None: next(health))
+
+    def _fake_run(cmd, **kwargs):
+        commands.append((cmd, kwargs))
+        if cmd[:2] == ["/usr/bin/git", "clone"]:
+            (repo_dir / ".git").mkdir(parents=True, exist_ok=True)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(module, "_run", _fake_run)
+
+    module.setup_native_searxng(auto=True, explicit=True)
+
+    assert commands[0][0][:7] == [
+        "/usr/bin/git",
+        "clone",
+        "--depth",
+        "1",
+        "--branch",
+        "master",
+        "https://github.com/searxng/searxng.git",
+    ]
+    assert commands[0][0][7] == str(repo_dir)
+
+    install_cmd, install_kwargs = commands[1]
+    assert install_cmd[:3] == ["sudo", "-H", "env"]
+    assert "FORCE_TIMEOUT=0" in install_cmd
+    assert "SEARXNG_URL=http://127.0.0.1:8080" in install_cmd
+    assert "SEARXNG_PORT=8080" in install_cmd
+    assert "SEARXNG_BIND_ADDRESS=127.0.0.1" in install_cmd
+    assert install_cmd[-3:] == ["./utils/searxng.sh", "install", "all"]
+    assert install_kwargs["cwd"] == repo_dir
+    assert install_kwargs["timeout"] is None
+
+
+def test_setup_native_searxng_uses_wsl_on_windows(monkeypatch):
+    """Windows native mode should route through WSL and still use the official script."""
+
+    module = _load_setup_module(monkeypatch)
+    commands = []
+    health = iter([False, True])
+
+    monkeypatch.setattr(module, "IS_WIN", True)
+    monkeypatch.setattr(module, "IS_LINUX", False)
+    monkeypatch.setattr(module, "_searxng_healthcheck", lambda base_url=None: next(health))
+    monkeypatch.setattr(
+        module,
+        "_which",
+        lambda name: "C:/Windows/System32/wsl.exe" if name in {"wsl", "wsl.exe"} else None,
+    )
+
+    def _fake_run(cmd, **kwargs):
+        commands.append((cmd, kwargs))
+        if cmd[:3] == ["wsl", "-l", "-q"]:
+            return subprocess.CompletedProcess(cmd, 0, "Ubuntu\n", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(module, "_run", _fake_run)
+
+    module.setup_native_searxng(auto=True, explicit=True)
+
+    assert commands[0][0] == ["wsl", "-l", "-q"]
+    install_cmd, install_kwargs = commands[1]
+    assert install_cmd[:5] == [
+        "wsl",
+        "-d",
+        "Ubuntu",
+        "--",
+        "bash",
+    ]
+    assert install_cmd[5] == "-lc"
+    assert "./utils/searxng.sh install all" in install_cmd[6]
+    assert "git clone --depth 1 --branch \"$branch\"" in install_cmd[6]
+    assert install_kwargs["timeout"] is None
+    assert install_kwargs["capture"] is False
+
+
+def test_setup_native_searxng_windows_requires_wsl(monkeypatch):
+    """Windows native mode should guide the user when WSL is unavailable."""
+
+    module = _load_setup_module(monkeypatch)
+    monkeypatch.setattr(module, "IS_WIN", True)
+    monkeypatch.setattr(module, "IS_LINUX", False)
+    monkeypatch.setattr(module, "_searxng_healthcheck", lambda base_url=None: False)
+    monkeypatch.setattr(module, "_which", lambda name: None)
+
+    module.setup_native_searxng(auto=True, explicit=True)
+
+
 def test_main_default_flow_calls_setup_local_searxng(monkeypatch):
     """The normal interactive installer path should still offer the SearXNG step."""
 
@@ -222,3 +369,27 @@ def test_main_default_flow_calls_setup_local_searxng(monkeypatch):
     assert called["value"] is True
     assert called["auto"] is False
     assert called["explicit"] is False
+
+
+def test_main_explicit_searxng_native_calls_native_setup(monkeypatch):
+    """The dedicated native flag should route to the native SearXNG installer."""
+
+    module = _load_setup_module(monkeypatch)
+    monkeypatch.setattr(module.sys, "argv", ["setup.py", "--searxng-native"])
+
+    called = {"value": False, "auto": None, "explicit": None}
+
+    def _mark_called(*args, **kwargs):
+        called["value"] = True
+        called["auto"] = kwargs.get("auto")
+        called["explicit"] = kwargs.get("explicit")
+
+    monkeypatch.setattr(module, "_detect_china_network", lambda: False)
+    monkeypatch.setattr(module, "create_workspace", lambda: None)
+    monkeypatch.setattr(module, "setup_native_searxng", _mark_called)
+
+    module.main()
+
+    assert called["value"] is True
+    assert called["auto"] is True
+    assert called["explicit"] is True
