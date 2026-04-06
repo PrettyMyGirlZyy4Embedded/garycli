@@ -13,6 +13,7 @@ Gary Dev Agent - 一键环境安装脚本
   python setup.py --hal f1     仅下载 STM32F1 HAL
   python setup.py --hal f1 f4  下载 F1 + F4 HAL
   python setup.py --searxng    仅安装 / 启动本地 SearXNG
+  python setup.py --searxng-native  仅用官方脚本原生安装 / 启动本地 SearXNG
 
 安装完成后:
   gary                    启动交互式对话助手
@@ -51,6 +52,7 @@ import subprocess
 import platform
 import shutil
 import argparse
+import shlex
 import stat
 import sysconfig
 from pathlib import Path
@@ -484,12 +486,7 @@ _AI_PRESETS = [
         "gemini-2.5-flash",
         "gemini",
     ),
-    (
-        "通义千问 (阿里云)",
-        "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "qwen-plus",
-        "openai",
-    ),
+    ("通义千问 (阿里云)", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus", "openai"),
     ("智谱 GLM", "https://open.bigmodel.cn/api/paas/v4/", "glm-4-flash", "openai"),
     ("Ollama (本地无需Key)", "http://127.0.0.1:11434/v1", "qwen2.5-coder:14b", "openai"),
     ("自定义 / Other", "", "", ""),
@@ -665,11 +662,7 @@ def configure_ai(auto: bool):
     default_model = (
         preset_model
         if preset_model
-        else (
-            current_model_for_style
-            if current_model_for_style
-            else default_models.get(api_style, "gpt-4o")
-        )
+        else (current_model_for_style if current_model_for_style else default_models.get(api_style, "gpt-4o"))
     )
     hint = f" [{_c('36', default_model)}]"
 
@@ -1177,6 +1170,11 @@ def install_python_packages(auto: bool):
 SEARXNG_DEFAULT_URL = "http://127.0.0.1:8080"
 SEARXNG_DEFAULT_IMAGE = "searxng/searxng:latest"
 SEARXNG_DEFAULT_CONTAINER = "gary-searxng"
+SEARXNG_DEFAULT_GIT_URL = "https://github.com/searxng/searxng.git"
+SEARXNG_DEFAULT_GIT_BRANCH = "master"
+SEARXNG_NATIVE_REPO_DIR = SEARXNG_DIR / "native-src"
+SEARXNG_DEFAULT_WSL_DISTRO = "Ubuntu"
+SEARXNG_DEFAULT_WSL_REPO_DIR = "~/.garycli/searxng"
 
 
 def _searxng_url() -> str:
@@ -1194,6 +1192,16 @@ def _searxng_container_name() -> str:
     return value or SEARXNG_DEFAULT_CONTAINER
 
 
+def _searxng_git_url() -> str:
+    value = (os.environ.get("GARY_SEARXNG_GIT_URL") or SEARXNG_DEFAULT_GIT_URL).strip()
+    return value or SEARXNG_DEFAULT_GIT_URL
+
+
+def _searxng_git_branch() -> str:
+    value = (os.environ.get("GARY_SEARXNG_GIT_BRANCH") or SEARXNG_DEFAULT_GIT_BRANCH).strip()
+    return value or SEARXNG_DEFAULT_GIT_BRANCH
+
+
 def _searxng_host_port() -> tuple[str, int]:
     parsed = urlparse(_searxng_url())
     host = parsed.hostname or "127.0.0.1"
@@ -1201,8 +1209,25 @@ def _searxng_host_port() -> tuple[str, int]:
     return host, port
 
 
+def _searxng_wsl_distro() -> str:
+    value = (os.environ.get("GARY_SEARXNG_WSL_DISTRO") or SEARXNG_DEFAULT_WSL_DISTRO).strip()
+    return value or SEARXNG_DEFAULT_WSL_DISTRO
+
+
+def _searxng_wsl_repo_dir() -> str:
+    value = (os.environ.get("GARY_SEARXNG_WSL_REPO_DIR") or SEARXNG_DEFAULT_WSL_REPO_DIR).strip()
+    return value or SEARXNG_DEFAULT_WSL_REPO_DIR
+
+
 def _container_runtime() -> Optional[str]:
     for candidate in ("docker", "podman"):
+        if _which(candidate):
+            return candidate
+    return None
+
+
+def _wsl_runtime() -> Optional[str]:
+    for candidate in ("wsl", "wsl.exe"):
         if _which(candidate):
             return candidate
     return None
@@ -1237,6 +1262,198 @@ def _searxng_healthcheck(base_url: str = None) -> bool:
         return False
 
 
+def _ensure_searxng_native_repo(repo_dir: Path) -> bool:
+    git = _which("git")
+    if not git:
+        warn("未找到 git，无法准备官方 SearXNG 安装脚本")
+        return False
+
+    repo_url = _searxng_git_url()
+    branch = _searxng_git_branch()
+    repo_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    if repo_dir.exists() and not (repo_dir / ".git").exists():
+        warn(f"SearXNG 源码目录已存在但不是 git 仓库: {repo_dir}")
+        info("请先清理该目录，或改用新的 GARY_SEARXNG_GIT_URL / GARY_SEARXNG_GIT_BRANCH")
+        return False
+
+    if (repo_dir / ".git").exists():
+        step("更新官方 SearXNG 安装源码")
+        commands = [
+            [git, "-C", str(repo_dir), "fetch", "--depth", "1", "origin", branch],
+            [git, "-C", str(repo_dir), "checkout", branch],
+            [git, "-C", str(repo_dir), "pull", "--ff-only", "origin", branch],
+        ]
+    else:
+        step("拉取官方 SearXNG 安装源码")
+        commands = [
+            [git, "clone", "--depth", "1", "--branch", branch, repo_url, str(repo_dir)],
+        ]
+
+    for cmd in commands:
+        result = _run(cmd, capture=False, timeout=None)
+        if result.returncode != 0:
+            warn(f"SearXNG 源码准备失败，请手动检查: {' '.join(cmd)}")
+            return False
+
+    return True
+
+
+def _searxng_native_install_env() -> dict:
+    host, port = _searxng_host_port()
+    return {
+        "FORCE_TIMEOUT": "0",
+        "SEARXNG_URL": _searxng_url(),
+        "SEARXNG_PORT": str(port),
+        "SEARXNG_BIND_ADDRESS": host,
+        "GIT_URL": _searxng_git_url(),
+        "GIT_BRANCH": _searxng_git_branch(),
+    }
+
+
+def _list_wsl_distros(runtime: str) -> list[str]:
+    result = _run([runtime, "-l", "-q"], timeout=30)
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _pick_wsl_distro(runtime: str) -> str:
+    requested = _searxng_wsl_distro()
+    distros = _list_wsl_distros(runtime)
+    if not distros:
+        return ""
+    for distro in distros:
+        if distro.lower() == requested.lower():
+            return distro
+    return distros[0]
+
+
+def setup_native_searxng(auto: bool, *, explicit: bool = False):
+    header("Step 3b  本地 SearXNG（官方原生安装）")
+    base_url = _searxng_url()
+    if _searxng_healthcheck(base_url):
+        ok(f"SearXNG 已运行: {base_url}")
+        return
+
+    if IS_WIN:
+        runtime = _wsl_runtime()
+        if not runtime:
+            warn("未找到 WSL，无法在 Windows 上用官方脚本原生安装 SearXNG")
+            info("请先执行: wsl --install -d Ubuntu")
+            info("或者先手动部署 SearXNG，再设置 GARY_SEARXNG_URL")
+            return
+
+        distro = _pick_wsl_distro(runtime)
+        if not distro:
+            warn("未检测到可用的 WSL 发行版")
+            info("请先执行: wsl --install -d Ubuntu")
+            return
+
+        if not (auto or explicit):
+            if not ask(f"使用 WSL 发行版 {distro} 原生安装本地 SearXNG？", default="y"):
+                info("已跳过原生安装，可稍后执行：python setup.py --searxng-native")
+                return
+
+        env_items = _searxng_native_install_env()
+        repo_dir = _searxng_wsl_repo_dir()
+        repo_url = _searxng_git_url()
+        branch = _searxng_git_branch()
+        quoted_repo_dir = shlex.quote(repo_dir)
+        quoted_repo_url = shlex.quote(repo_url)
+        quoted_branch = shlex.quote(branch)
+        install_env = " ".join(f"{key}={shlex.quote(value)}" for key, value in env_items.items())
+        shell_script = (
+            "set -e; "
+            f"repo_dir={quoted_repo_dir}; "
+            f"repo_url={quoted_repo_url}; "
+            f"branch={quoted_branch}; "
+            'mkdir -p "$(dirname "$repo_dir")"; '
+            'if [ -d "$repo_dir/.git" ]; then '
+            'git -C "$repo_dir" fetch --depth 1 origin "$branch"; '
+            'git -C "$repo_dir" checkout "$branch"; '
+            'git -C "$repo_dir" pull --ff-only origin "$branch"; '
+            "else "
+            'git clone --depth 1 --branch "$branch" "$repo_url" "$repo_dir"; '
+            "fi; "
+            'cd "$repo_dir"; '
+            f"sudo -H env {install_env} ./utils/searxng.sh install all"
+        )
+
+        step(f"使用 WSL({distro}) 调用官方脚本安装 SearXNG")
+        info("该步骤会在 WSL 中调用 sudo，并按官方脚本安装所需系统依赖与服务")
+        result = _run(
+            [runtime, "-d", distro, "--", "bash", "-lc", shell_script],
+            capture=False,
+            timeout=None,
+        )
+        if result.returncode != 0:
+            warn("WSL 原生安装脚本执行失败")
+            info(
+                "可手动重试: "
+                f'{runtime} -d {distro} -- bash -lc "cd {_searxng_wsl_repo_dir()} && sudo -H ./utils/searxng.sh install all"'
+            )
+            return
+
+        if _searxng_healthcheck(base_url):
+            ok(f"SearXNG 已就绪: {base_url}")
+            info(f"搜索工具将使用本地后端: {base_url}")
+            return
+
+        warn("WSL 安装完成，但 Windows 侧健康检查未通过")
+        info("请确认 WSL 的 localhost 转发已启用，或把 GARY_SEARXNG_URL 指到 WSL 实例地址")
+        return
+
+    if not IS_LINUX:
+        warn("官方 SearXNG 原生一键安装当前仅支持 Linux")
+        info("macOS / Windows 建议使用已有实例，或设置 GARY_SEARXNG_URL 指向外部 SearXNG")
+        return
+
+    if not _which("sudo"):
+        warn("未找到 sudo，无法调用官方 SearXNG 原生安装脚本")
+        info("你也可以先手动安装 SearXNG，然后设置 GARY_SEARXNG_URL")
+        return
+
+    if not _which("git"):
+        warn("未找到 git，无法拉取官方 SearXNG 安装源码")
+        return
+
+    if not (auto or explicit):
+        if not ask("改用官方原生方式安装本地 SearXNG（需要 git + sudo）？", default="y"):
+            info("已跳过原生安装，可稍后执行：python setup.py --searxng-native")
+            return
+
+    SERVICES_DIR.mkdir(parents=True, exist_ok=True)
+    SEARXNG_DIR.mkdir(parents=True, exist_ok=True)
+    repo_dir = SEARXNG_NATIVE_REPO_DIR
+    if not _ensure_searxng_native_repo(repo_dir):
+        return
+
+    env_items = _searxng_native_install_env()
+    install_cmd = ["sudo", "-H", "env"]
+    for key, value in env_items.items():
+        install_cmd.append(f"{key}={value}")
+    install_cmd.extend(["./utils/searxng.sh", "install", "all"])
+
+    step("使用官方脚本原生安装 SearXNG")
+    info("该步骤会调用 sudo，并按官方脚本安装所需系统依赖与服务")
+    result = _run(install_cmd, capture=False, timeout=None, cwd=repo_dir)
+    if result.returncode != 0:
+        warn("官方原生安装脚本执行失败")
+        info(f"可进入目录后重试: cd {repo_dir} && sudo -H ./utils/searxng.sh install all")
+        return
+
+    if _searxng_healthcheck(base_url):
+        ok(f"SearXNG 已就绪: {base_url}")
+        info(f"搜索工具将使用本地后端: {base_url}")
+        info(f"后续更新可执行: cd {repo_dir} && sudo -H ./utils/searxng.sh instance update")
+        return
+
+    warn("原生安装完成，但健康检查未通过")
+    info(f"可执行排查: cd {repo_dir} && sudo -H ./utils/searxng.sh instance inspect")
+    info(f"当前配置目标地址: {base_url}")
+
+
 def setup_local_searxng(auto: bool, *, explicit: bool = False):
     header("Step 3b  本地 SearXNG（网页搜索可选）")
     base_url = _searxng_url()
@@ -1250,8 +1467,10 @@ def setup_local_searxng(auto: bool, *, explicit: bool = False):
 
     runtime = _container_runtime()
     if not runtime:
-        warn("未找到 docker / podman，无法一键安装本地 SearXNG")
-        info("如需联网搜索，请先安装 Docker / Podman 后执行：python setup.py --searxng")
+        warn("未找到 docker / podman，容器一键安装不可用")
+        info("可改用官方原生安装：python setup.py --searxng-native")
+        if not auto and not explicit and ask("改用官方原生方式安装本地 SearXNG（需要 git + sudo）？", default="y"):
+            setup_native_searxng(auto=True, explicit=True)
         return
 
     if not (
@@ -1782,9 +2001,7 @@ def _install_gary_unix(auto: bool):
 def _install_gary_win(auto: bool):
     install_dir = _resolve_win_install_dir()
     gary_bat = install_dir / "gary.bat"
-    expected_content = _GARY_BAT.format(
-        agent_script=str(AGENT_SCRIPT), python=_active_python_path()
-    )
+    expected_content = _GARY_BAT.format(agent_script=str(AGENT_SCRIPT), python=_active_python_path())
 
     if gary_bat.exists():
         existing = gary_bat.read_text(encoding="utf-8", errors="ignore")
@@ -1937,6 +2154,11 @@ def main():
     parser.add_argument("--hal", nargs="*", help="仅下载 HAL（可选: f0 f1 f3 f4）")
     parser.add_argument("--rtos", action="store_true", help="仅下载 FreeRTOS Kernel")
     parser.add_argument("--searxng", action="store_true", help="仅安装 / 启动本地 SearXNG")
+    parser.add_argument(
+        "--searxng-native",
+        action="store_true",
+        help="仅用官方脚本原生安装 / 启动本地 SearXNG（不依赖 Docker）",
+    )
     args = parser.parse_args()
 
     print(
@@ -1982,6 +2204,11 @@ def main():
         if args.searxng:
             create_workspace()
             setup_local_searxng(auto=True, explicit=True)
+            return
+
+        if args.searxng_native:
+            create_workspace()
+            setup_native_searxng(auto=True, explicit=True)
             return
 
         check_python()
