@@ -16,12 +16,77 @@ from core.platforms import (
 )
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+WEB_RESEARCH_HINT_HEADER = "## Gary Web Research Directive"
+_WEB_RESEARCH_KEYWORDS = (
+    "最新",
+    "当前",
+    "今天",
+    "官方",
+    "官网",
+    "文档",
+    "教程",
+    "示例",
+    "搜索",
+    "查一下",
+    "查一查",
+    "联网",
+    "api",
+    "docs",
+    "documentation",
+    "official",
+    "latest",
+    "current",
+    "today",
+    "tutorial",
+    "example",
+    "examples",
+    "search",
+    "browse",
+    "look up",
+    "verify",
+    "uncertain",
+    "not sure",
+    "traceback",
+    "importerror",
+    "attributeerror",
+    "module not found",
+)
 
 
 def _load_template(name: str) -> str:
     """Load a markdown prompt template from disk."""
 
     return (_TEMPLATES_DIR / name).read_text(encoding="utf-8").strip()
+
+
+def should_force_web_research(user_input: str) -> bool:
+    """Return whether the current turn should get an explicit web-research directive."""
+
+    text = str(user_input or "").strip().lower()
+    if not text:
+        return False
+    return any(keyword in text for keyword in _WEB_RESEARCH_KEYWORDS)
+
+
+def build_web_research_hint(language: str) -> str:
+    """Build a one-turn research directive injected ahead of user requests."""
+
+    normalized_language = "en" if str(language).strip().lower().startswith("en") else "zh"
+    if normalized_language == "en":
+        return (
+            f"{WEB_RESEARCH_HINT_HEADER}\n"
+            "- This request likely depends on external or time-sensitive information.\n"
+            "- Before answering, use `browser_search`, then open at least one result with `browser_open_result` or `browser_open`.\n"
+            "- If you are unsure about an API, module, error explanation, or official support status, verify it on the web first.\n"
+            "- Do not answer from memory alone when verification is available."
+        )
+    return (
+        f"{WEB_RESEARCH_HINT_HEADER}\n"
+        "- 当前请求很可能依赖外部资料或时效性信息。\n"
+        "- 回答前先用 `browser_search`，再用 `browser_open_result` 或 `browser_open` 打开至少 1 个结果核实。\n"
+        "- 若你不确定某个 API、模块、错误解释或官方支持情况，先联网查证再回答。\n"
+        "- 只要可以验证，就不要只靠记忆作答。"
+    )
 
 
 def build_system_prompt(chip: str, language: str, hw_connected: bool) -> str:
@@ -106,9 +171,13 @@ def build_system_prompt(chip: str, language: str, hw_connected: bool) -> str:
             "\n\n## Web Research Workflow\n"
             "- For online docs, latest information, API references, and tutorials, prefer this flow: "
             "`browser_search -> browser_open_result -> browser_extract_links`.\n"
+            "- You must search first when the user asks for latest/current information, official docs, APIs, examples, tutorials, or when you are unsure whether a module / class / function / attribute / error explanation is correct.\n"
+            "- Before claiming that a board, firmware, or SDK does not provide a module or API, verify it on the web first.\n"
             "- Do not stop after only listing search hits. Open the most relevant result and read the page.\n"
+            "- After searching, open at least one result before concluding. Do not answer from titles alone.\n"
             "- If the target URL is already known, use `browser_open` directly.\n"
             "- Use `fetch_url` only for lightweight exact-URL text fetches when title and links are not needed.\n"
+            "- When uncertain, default to web verification instead of guessing from memory.\n"
             "- `browser_search` and `web_search` depend on a local SearXNG instance. If search fails, clearly tell the user to start local SearXNG or run `python setup.py --searxng`.\n"
             "- Do not silently switch to public search backends when local SearXNG is unavailable."
         )
@@ -117,9 +186,12 @@ def build_system_prompt(chip: str, language: str, hw_connected: bool) -> str:
             "\n\n## 联网检索工作流\n"
             "- 需要查在线文档、最新信息、API 说明或教程时，优先走："
             "`browser_search -> browser_open_result -> browser_extract_links`。\n"
+            "- 遇到这些情况必须先联网查证：用户要求“最新 / 当前 / 今天 / 官方 / 官网 / 文档 / API / 示例 / 教程”；你不确定某个模块、类、函数、属性、错误解释是否正确；你准备断言某个平台“没有某模块 / 不支持某 API”。\n"
             "- 不要只停留在搜索结果列表，必须打开最相关网页并读取正文。\n"
+            "- 搜索后至少打开 1 个结果再下结论，不能只看标题就回答。\n"
             "- 已知目标 URL 时，直接用 `browser_open`。\n"
             "- `fetch_url` 只用于已知 URL 的轻量纯文本抓取；若需要标题和链接列表，优先用 `browser_open`。\n"
+            "- 只要不确定，默认先上网核实，不要靠记忆硬猜。\n"
             "- `browser_search` 和 `web_search` 依赖本地 SearXNG；若搜索失败，要明确提示用户启动本地 SearXNG，或运行 `python setup.py --searxng` 完成一键安装。\n"
             "- 本地 SearXNG 不可用时，不要擅自切换到公共搜索后端。"
         )

@@ -26,12 +26,15 @@ _MICROPYTHON_COMPILE_PROMPT = """## MicroPython 语法诊断
 - 优先修复工具返回的 `line` / `offset` / `snippet`，不要做无关重构。
 - 常见问题：缩进不一致、缺冒号、括号不配对、字符串未闭合、`try/except` 结构错误。
 - 若 `workspace/projects/latest_workspace/main.py` 不存在，说明当前还没有缓存源码；不要调用 `str_replace_edit`，直接生成完整 `main.py` 并用对应的 compile / auto_sync_cycle 创建缓存。
+- 若报错涉及陌生模块、板级专有 API、第三方库或你不确定的语法/导入写法，先用 `browser_search -> browser_open_result` 查官方文档或示例，再修改代码。
 - 若是增量修改造成的错误，优先 `str_replace_edit` + `stm32_recompile`，不要整文件重写。"""
 
 _MICROPYTHON_RUNTIME_PROMPT = """## MicroPython 运行诊断
 - 优先阅读串口里的 `Traceback`，按最后一层报错直接修复。
 - 若没有任何输出，先确认 USB 串口连接，再确认 `print("Gary:BOOT")` 是否放在文件顶部附近。
 - 涉及 I2C / OLED / 传感器时，先 `scan()` 或先探测，再进入主循环。
+- 若 `Traceback` 指向陌生模块、属性、方法、错误码或板级专有接口，先联网搜索官方文档 / 示例验证，再下结论。
+- 在你准备说“这个平台没有某模块 / 不支持某 API”之前，先联网查证，不要凭记忆断言。
 - 若工具只完成了语法检查而没有检测到串口，必须明确告诉用户当前没有运行时验证。"""
 
 
