@@ -12,6 +12,7 @@ Gary Dev Agent - 一键环境安装脚本
   python setup.py --hal        仅重新下载 STM32 HAL 库（全部系列）
   python setup.py --hal f1     仅下载 STM32F1 HAL
   python setup.py --hal f1 f4  下载 F1 + F4 HAL
+  python setup.py --searxng    仅安装 / 启动本地 SearXNG
 
 安装完成后:
   gary                    启动交互式对话助手
@@ -53,6 +54,7 @@ import argparse
 import stat
 from pathlib import Path
 from typing import Optional, List
+from urllib.parse import urlparse
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Windows 控制台编码修复
@@ -153,6 +155,8 @@ WORKSPACE = SCRIPT_DIR / "workspace"
 HAL_DIR = WORKSPACE / "hal"
 BUILD_DIR = WORKSPACE / "build"
 PROJECTS_DIR = WORKSPACE / "projects"
+SERVICES_DIR = WORKSPACE / "services"
+SEARXNG_DIR = SERVICES_DIR / "searxng"
 AGENT_SCRIPT = SCRIPT_DIR / "stm32_agent.py"
 
 PIP = [sys.executable, "-m", "pip"]
@@ -417,12 +421,7 @@ _AI_PRESETS = [
         "gemini-2.5-flash",
         "gemini",
     ),
-    (
-        "通义千问 (阿里云)",
-        "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "qwen-plus",
-        "openai",
-    ),
+    ("通义千问 (阿里云)", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus", "openai"),
     ("智谱 GLM", "https://open.bigmodel.cn/api/paas/v4/", "glm-4-flash", "openai"),
     ("Ollama (本地无需Key)", "http://127.0.0.1:11434/v1", "qwen2.5-coder:14b", "openai"),
     ("自定义 / Other", "", "", ""),
@@ -598,11 +597,7 @@ def configure_ai(auto: bool):
     default_model = (
         preset_model
         if preset_model
-        else (
-            current_model_for_style
-            if current_model_for_style
-            else default_models.get(api_style, "gpt-4o")
-        )
+        else (current_model_for_style if current_model_for_style else default_models.get(api_style, "gpt-4o"))
     )
     hint = f" [{_c('36', default_model)}]"
 
@@ -1013,7 +1008,7 @@ PYTHON_PKGS = [
     ("pyocd", "pyocd", True),
     ("serial", "pyserial", True),
     ("requests", "requests", True),
-    ("bs4", "beautifulsoup4", False),
+    ("bs4", "beautifulsoup4", True),
     ("docx", "python-docx", False),
     ("PIL", "Pillow", True),
 ]
@@ -1054,6 +1049,140 @@ def install_python_packages(auto: bool):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# STEP 3b: 本地 SearXNG（网页搜索）
+# ─────────────────────────────────────────────────────────────────────────────
+SEARXNG_DEFAULT_URL = "http://127.0.0.1:8080"
+SEARXNG_DEFAULT_IMAGE = "ghcr.io/searxng/searxng:latest"
+SEARXNG_DEFAULT_CONTAINER = "gary-searxng"
+
+
+def _searxng_url() -> str:
+    value = (os.environ.get("GARY_SEARXNG_URL") or SEARXNG_DEFAULT_URL).strip()
+    return value.rstrip("/") or SEARXNG_DEFAULT_URL
+
+
+def _searxng_image() -> str:
+    value = (os.environ.get("GARY_SEARXNG_IMAGE") or SEARXNG_DEFAULT_IMAGE).strip()
+    return value or SEARXNG_DEFAULT_IMAGE
+
+
+def _searxng_container_name() -> str:
+    value = (os.environ.get("GARY_SEARXNG_CONTAINER") or SEARXNG_DEFAULT_CONTAINER).strip()
+    return value or SEARXNG_DEFAULT_CONTAINER
+
+
+def _searxng_host_port() -> tuple[str, int]:
+    parsed = urlparse(_searxng_url())
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 8080
+    return host, port
+
+
+def _container_runtime() -> Optional[str]:
+    for candidate in ("docker", "podman"):
+        if _which(candidate):
+            return candidate
+    return None
+
+
+def _container_exists(runtime: str, name: str) -> bool:
+    return _run([runtime, "inspect", name], timeout=15).returncode == 0
+
+
+def _container_running(runtime: str, name: str) -> bool:
+    result = _run([runtime, "inspect", "-f", "{{.State.Running}}", name], timeout=15)
+    return result.returncode == 0 and result.stdout.strip().lower() == "true"
+
+
+def _searxng_healthcheck(base_url: str = None) -> bool:
+    import urllib.request
+
+    target = (base_url or _searxng_url()).rstrip("/")
+    req = urllib.request.Request(
+        f"{target}/search?q=gary&format=json",
+        headers={"User-Agent": "Mozilla/5.0"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = resp.read(256).decode("utf-8", errors="ignore")
+            return resp.status == 200 and "results" in body
+    except Exception:
+        return False
+
+
+def setup_local_searxng(auto: bool):
+    header("Step 3b  本地 SearXNG（网页搜索可选）")
+    base_url = _searxng_url()
+    if _searxng_healthcheck(base_url):
+        ok(f"SearXNG 已运行: {base_url}")
+        return
+
+    runtime = _container_runtime()
+    if not runtime:
+        warn("未找到 docker / podman，无法一键安装本地 SearXNG")
+        info("如需联网搜索，请先安装 Docker / Podman 后执行：python setup.py --searxng")
+        return
+
+    if not (auto or ask("安装并启动本地 SearXNG（browser_search / web_search 需要）？", default="n")):
+        info("已跳过，本地网页搜索工具将在 SearXNG 启动后可用")
+        return
+
+    image = _searxng_image()
+    container_name = _searxng_container_name()
+    host, port = _searxng_host_port()
+    SERVICES_DIR.mkdir(parents=True, exist_ok=True)
+    SEARXNG_DIR.mkdir(parents=True, exist_ok=True)
+
+    step(f"使用 {runtime} 准备本地 SearXNG")
+
+    if _container_exists(runtime, container_name):
+        if _container_running(runtime, container_name):
+            ok(f"SearXNG 容器已运行: {container_name}")
+        else:
+            info(f"启动已有容器: {container_name}")
+            result = _run([runtime, "start", container_name], capture=False, timeout=60)
+            if result.returncode != 0:
+                warn(f"启动容器失败，请手动查看日志: {runtime} logs {container_name}")
+                return
+    else:
+        info(f"拉取镜像: {image}")
+        pull_result = _run([runtime, "pull", image], capture=False, timeout=900)
+        if pull_result.returncode != 0:
+            warn(f"镜像拉取失败，请手动重试: {runtime} pull {image}")
+            return
+
+        info(f"创建容器: {container_name}")
+        run_result = _run(
+            [
+                runtime,
+                "run",
+                "-d",
+                "--name",
+                container_name,
+                "--restart",
+                "unless-stopped",
+                "-p",
+                f"{host}:{port}:8080",
+                image,
+            ],
+            capture=False,
+            timeout=120,
+        )
+        if run_result.returncode != 0:
+            warn(f"容器创建失败，请手动查看日志或重试: {runtime} logs {container_name}")
+            return
+
+    if _searxng_healthcheck(base_url):
+        ok(f"SearXNG 已就绪: {base_url}")
+        info(f"搜索工具将使用本地后端: {base_url}")
+        return
+
+    warn("容器已启动，但健康检查未通过")
+    info(f"查看容器日志: {runtime} logs {container_name}")
+    info(f"若端口冲突，可设置环境变量后重试: export GARY_SEARXNG_URL=http://127.0.0.1:18080")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # STEP 4: 工作区目录
 # ─────────────────────────────────────────────────────────────────────────────
 def create_workspace():
@@ -1064,6 +1193,7 @@ def create_workspace():
         HAL_DIR / "CMSIS" / "Include",
         BUILD_DIR,
         PROJECTS_DIR,
+        SERVICES_DIR,
     ]:
         d.mkdir(parents=True, exist_ok=True)
     ok(f"workspace -> {WORKSPACE}")
@@ -1608,6 +1738,15 @@ def verify():
         warn("gary 命令  未在 PATH 中（可能需要重新打开终端）")
         status["gary"] = False
 
+    # 本地 SearXNG
+    searx_url = _searxng_url()
+    if _searxng_healthcheck(searx_url):
+        ok(f"本地 SearXNG  {searx_url}")
+        status["searxng"] = True
+    else:
+        warn(f"本地 SearXNG  未运行 [可选] -> {searx_url}")
+        status["searxng"] = False
+
     print()
     all_ok = status["ai"] and status["gcc"] and status["python"] and status["hal"]
     if all_ok:
@@ -1650,6 +1789,7 @@ def main():
     parser.add_argument("--check", action="store_true", help="仅检查环境")
     parser.add_argument("--hal", nargs="*", help="仅下载 HAL（可选: f0 f1 f3 f4）")
     parser.add_argument("--rtos", action="store_true", help="仅下载 FreeRTOS Kernel")
+    parser.add_argument("--searxng", action="store_true", help="仅安装 / 启动本地 SearXNG")
     args = parser.parse_args()
 
     print(
@@ -1691,12 +1831,18 @@ def main():
             download_freertos(auto=True)
             return
 
+        if args.searxng:
+            create_workspace()
+            setup_local_searxng(auto=True)
+            return
+
         check_python()
         configure_ai(auto=args.auto)
         configure_chip(auto=args.auto)
         install_arm_gcc(auto=args.auto)
         install_python_packages(auto=args.auto)
         create_workspace()
+        setup_local_searxng(auto=args.auto)
         download_hal(auto=args.auto)
         download_freertos(auto=args.auto)
         setup_udev(auto=args.auto)
