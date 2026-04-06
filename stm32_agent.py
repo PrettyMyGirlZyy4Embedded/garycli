@@ -18,6 +18,7 @@ def main() -> None:
     parser.add_argument("--config", action="store_true")
     parser.add_argument("--do", dest="task", default="")
     parser.add_argument("--telegram", default="")
+    parser.add_argument("--thinking", action="store_true")
     run(parser.parse_args())
 
 
