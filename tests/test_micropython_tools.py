@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from core.micropython_tools import micropython_connect, micropython_flash, micropython_list_files_tool
+from core.micropython_tools import (
+    micropython_connect,
+    micropython_flash,
+    micropython_list_files_tool,
+)
 from core.state import get_context
 
 
@@ -133,7 +137,8 @@ def test_micropython_flash_syncs_explicit_file_before_upload(tmp_path, monkeypat
     monkeypatch.setattr(
         "core.micropython_tools.sync_latest_workspace",
         lambda code, chip=None: (
-            sync_calls.append((code, chip or "")) or {
+            sync_calls.append((code, chip or ""))
+            or {
                 "success": True,
                 "path": "workspace/projects/latest_workspace/main.py",
                 "source_file": "main.py",
@@ -176,7 +181,8 @@ def test_micropython_flash_uses_last_code_when_latest_workspace_missing(monkeypa
     monkeypatch.setattr(
         "core.micropython_tools.sync_latest_workspace",
         lambda code, chip=None: (
-            sync_calls.append((code, chip or "")) or {
+            sync_calls.append((code, chip or ""))
+            or {
                 "success": True,
                 "path": "workspace/projects/latest_workspace/main.py",
                 "source_file": "main.py",
