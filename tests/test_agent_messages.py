@@ -5,7 +5,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from ai.client import estimate_request_tokens
-from core.agent import MAX_TOOL_RESULT_LEN, TRUNCATED_TOOL_RESULT_NOTICE, STM32Agent
+from core.agent import (
+    MAX_CONTEXT_TOKENS,
+    MAX_TOOL_RESULT_LEN,
+    TRUNCATED_TOOL_RESULT_NOTICE,
+    STM32Agent,
+)
 
 
 def test_messages_for_api_merges_multiple_system_messages():
@@ -109,6 +114,32 @@ def test_tokens_estimate_uses_request_payload_and_tools(monkeypatch):
     assert agent._tokens() == expected
 
 
+def test_context_usage_reports_remaining_percent(monkeypatch):
+    """Context usage should expose remaining-window percentage for the status bar."""
+
+    monkeypatch.setattr(
+        "core.agent.estimate_request_tokens",
+        lambda **kwargs: {"total_tokens": 87720},
+    )
+    monkeypatch.setattr("core.agent.get_context", lambda: SimpleNamespace(thinking_enabled=False))
+    monkeypatch.setattr("core.agent.TOOL_SCHEMAS", [])
+    monkeypatch.setattr("core.agent.AI_MODEL", "gpt-4o")
+    monkeypatch.setattr("core.agent.AI_TEMPERATURE", 1)
+
+    agent = object.__new__(STM32Agent)
+    agent._pending_system_hint = ""
+    agent.messages = [
+        {"role": "system", "content": "base prompt"},
+        {"role": "user", "content": "search docs"},
+    ]
+
+    usage = agent._context_usage()
+
+    assert usage["used_tokens"] == 87720
+    assert usage["limit_tokens"] == MAX_CONTEXT_TOKENS
+    assert usage["left_percent"] == int(round(((MAX_CONTEXT_TOKENS - 87720) / MAX_CONTEXT_TOKENS) * 100))
+
+
 def test_compose_system_prompt_caches_static_and_dynamic_parts(monkeypatch):
     """Static prompt fragments should be reused while member content only updates on hash changes."""
 
@@ -127,9 +158,7 @@ def test_compose_system_prompt_caches_static_and_dynamic_parts(monkeypatch):
     monkeypatch.setattr("core.agent.get_context", lambda: ctx)
     monkeypatch.setattr(
         "core.agent.build_system_prompt",
-        lambda chip, language, hw_connected: build_calls.__setitem__(
-            "system", build_calls["system"] + 1
-        )
+        lambda chip, language, hw_connected: build_calls.__setitem__("system", build_calls["system"] + 1)
         or "static-base",
     )
     monkeypatch.setattr(
@@ -188,6 +217,12 @@ def test_truncate_history_is_idempotent():
         {"role": "assistant", "content": "b" * 70000},
         {"role": "tool", "content": "c" * 70000},
     ]
+    agent._context_usage = lambda: {
+        "used_tokens": 300000 if len(agent.messages) > 3 else 200000,
+        "left_tokens": 0,
+        "left_percent": 0,
+        "limit_tokens": MAX_CONTEXT_TOKENS,
+    }
 
     agent._truncate_history()
     first_pass = [dict(item) for item in agent.messages]
@@ -265,3 +300,45 @@ def test_chat_truncates_history_again_after_tool_results(monkeypatch):
     assert reply == "done"
     assert len(truncate_calls) >= 2
     assert any("tool" in roles for roles in truncate_calls[1:])
+
+
+def test_chat_truncates_history_after_current_user_input(monkeypatch):
+    """The first compaction pass should happen after the current user turn is appended."""
+
+    class DummyChunk:
+        def __init__(self, *, content="", tool_calls=None):
+            self.choices = [
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=content,
+                        tool_calls=tool_calls or [],
+                        reasoning_content=None,
+                    )
+                )
+            ]
+            self.anthropic_thinking_blocks = None
+
+    agent = object.__new__(STM32Agent)
+    agent.client = None
+    agent.interactive = False
+    agent.messages = [{"role": "system", "content": "sys"}]
+    agent._pending_system_hint = ""
+    agent.thinking_log = []
+    agent.refresh_system_prompt = lambda: None
+    agent._prepare_web_research_hint = lambda user_input: None
+
+    truncate_snapshots: list[list[str]] = []
+    agent._truncate_history = lambda: truncate_snapshots.append(
+        [message.get("role") for message in agent.messages]
+    )
+
+    monkeypatch.setattr(
+        "core.agent.stream_chat",
+        lambda **kwargs: iter([DummyChunk(content="ok")]),
+    )
+    monkeypatch.setattr("core.agent.get_context", lambda: SimpleNamespace(thinking_enabled=False))
+
+    reply = agent.chat("hello", stream_to_console=False)
+
+    assert reply == "ok"
+    assert truncate_snapshots[0] == ["system", "user"]
